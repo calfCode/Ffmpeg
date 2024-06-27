@@ -1,0 +1,14 @@
+prefix=/fcssd2/wusonghua/work/bruce/ffmpeg_source/ffmpeg-7.0.1/android/armv8-a
+exec_prefix=${prefix}
+libdir=/fcssd2/wusonghua/work/bruce/ffmpeg_source/ffmpeg-7.0.1/android/armv8-a/lib
+includedir=/fcssd2/wusonghua/work/bruce/ffmpeg_source/ffmpeg-7.0.1/android/armv8-a/include
+
+Name: libpostproc
+Description: FFmpeg postprocessing library
+Version: 58.1.100
+Requires: 
+Requires.private: libavutil >= 59.8.100
+Conflicts:
+Libs: -L${libdir}  -lpostproc 
+Libs.private: -lm -latomic
+Cflags: -I${includedir}

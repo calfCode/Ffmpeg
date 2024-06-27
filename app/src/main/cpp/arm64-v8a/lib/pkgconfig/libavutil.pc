@@ -1,0 +1,14 @@
+prefix=/fcssd2/wusonghua/work/bruce/ffmpeg_source/ffmpeg-7.0.1/android/armv8-a
+exec_prefix=${prefix}
+libdir=/fcssd2/wusonghua/work/bruce/ffmpeg_source/ffmpeg-7.0.1/android/armv8-a/lib
+includedir=/fcssd2/wusonghua/work/bruce/ffmpeg_source/ffmpeg-7.0.1/android/armv8-a/include
+
+Name: libavutil
+Description: FFmpeg utility library
+Version: 59.8.100
+Requires: 
+Requires.private: 
+Conflicts:
+Libs: -L${libdir}  -lavutil 
+Libs.private: -pthread -lm -latomic -landroid
+Cflags: -I${includedir}
