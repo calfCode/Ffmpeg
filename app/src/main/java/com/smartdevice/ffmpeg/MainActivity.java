@@ -36,6 +36,8 @@ public class MainActivity extends AppCompatActivity {
 
     private ActivityMainBinding binding;
 
+    private boolean isMuxdebug = false;
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -46,49 +48,31 @@ public class MainActivity extends AppCompatActivity {
         // Example of a call to a native method
         TextView tv = binding.sampleText;
         tv.setText("Ffmpeg");
-//        AssectsUtil.loadAssetsDirfile(getApplicationContext(),"video");
-
-        File parentFile = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DCIM);
-        if (parentFile!=null) {
-            Log.d(TAG, "parentFile=" + parentFile.getAbsolutePath());
-        }
-
         String pk = getPackageName();
-        String fileName = "test_"+System.currentTimeMillis()+".mp4";
-        Log.d(TAG,"fileName="+fileName);
-        String filePath ="/data/user/0/"+pk+"/app_video/"+fileName;
-        filePath = parentFile.getAbsolutePath()+File.separator+fileName;
-        Log.d(TAG,"filePath="+filePath);
-        handleFile(filePath);
-//        ContentResolver contentResolver = getContentResolver();
-//        Uri videoCol = MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY);
-//        ContentValues contentValues = new ContentValues();
-//        contentValues.put(MediaStore.Video.Media.DISPLAY_NAME,fileName);
-//        Uri newUri = contentResolver.insert(videoCol,contentValues);
-//        Log.d(TAG,"newUri="+newUri.toString());
-//        File file = new File(filePath);
-//        if (file.exists()) {
-//            try {
-//                OutputStream outputStream = contentResolver.openOutputStream(newUri);
-//                if (outputStream!=null) {
-//                    InputStream inputStream = new FileInputStream(file);
-//                    byte[] buffer = new byte[1024];
-//                    int read;
-//                    while ((read = inputStream.read(buffer)) != -1)
-//                    {
-//                        outputStream.write(buffer, 0, read);
-//                    }
-//                    inputStream.close();
-//                    inputStream = null;
-//                    outputStream.flush();
-//                    outputStream.close();
-//                }
-//            } catch (FileNotFoundException e) {
-//                Log.d(TAG, "e=" + e.getMessage());
-//            } catch (IOException e) {
-//                Log.d(TAG, "e=" + e.getMessage());
-//            }
-//        }
+        String fileName;
+        if (isMuxdebug) {
+
+            File parentFile = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DCIM);
+            if (parentFile != null) {
+                Log.d(TAG, "parentFile=" + parentFile.getAbsolutePath());
+            }
+
+
+            fileName = "test_" + System.currentTimeMillis() + ".mp4";
+            Log.d(TAG, "fileName=" + fileName);
+            String filePath = "/data/user/0/" + pk + "/app_video/" + fileName;
+            filePath = parentFile.getAbsolutePath() + File.separator + fileName;
+
+            handleFile(filePath);
+        }
+        fileName="test.mp4";
+        String filePath = "/data/user/0/" + pk + "/app_video/" + fileName;
+
+        AssectsUtil.loadAssetsDirfile(getApplicationContext(),"video");
+
+        Log.d(TAG, "filePath=" + filePath);
+        demux(filePath);
+
     }
 
     /**
@@ -96,5 +80,7 @@ public class MainActivity extends AppCompatActivity {
      * which is packaged with this application.
      */
     public native  int handleFile(String filePath);
+
+    public native  int demux(String filePath);
 
 }
