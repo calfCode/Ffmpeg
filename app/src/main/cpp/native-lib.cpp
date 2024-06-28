@@ -2,7 +2,6 @@
 #include <string>
 #include "ffmpeg.h"
 
-
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -14,6 +13,7 @@ extern "C" {
 #include "libswresample/swresample.h"
 #include "libavutil/timestamp.h"
 #include "libavutil/avassert.h"
+#include "libavutil/imgutils.h"
 #ifdef __cplusplus
 }
 #endif
@@ -499,8 +499,8 @@ static void add_stream(OutputStream *ost, AVFormatContext *oc,
 
             c->bit_rate = 400000; //码率
             /* Resolution must be a multiple of two. */
-            c->width    = 352;//视频宽高，注意必须是双数，YUV420P格式要求
-            c->height   = 288;
+            c->width    = 270;//视频宽高，注意必须是双数，YUV420P格式要求
+            c->height   = 480;
             /* timebase: This is the fundamental unit of time (in seconds) in terms
              * of which frame timestamps are represented. For fixed-fps content,
              * timebase should be 1/framerate and timestamp increments should be
@@ -539,7 +539,7 @@ static void add_stream(OutputStream *ost, AVFormatContext *oc,
 
 
 extern "C" JNIEXPORT jint JNICALL
-Java_com_smartdevice_ffmpeg_MainActivity_handleFile(JNIEnv *env, jobject thiz, jstring file_path) {
+Java_com_smartdevice_ffmpeg_MainActivity_mux(JNIEnv *env, jobject thiz, jstring file_path) {
     const char *filename = env->GetStringUTFChars(file_path, 0);
     LOGD("filename=%s",filename);
     OutputStream video_st = { 0 }, audio_st = { 0 };
@@ -647,53 +647,13 @@ Java_com_smartdevice_ffmpeg_MainActivity_handleFile(JNIEnv *env, jobject thiz, j
 
     return 0;
 }
+
 extern "C"
 JNIEXPORT jint JNICALL
 Java_com_smartdevice_ffmpeg_MainActivity_demux(JNIEnv *env, jobject thiz, jstring file_path) {
     const char *filename = env->GetStringUTFChars(file_path, 0);
     LOGD("demux filename=%s",filename);
-    AVFormatContext *ps = avformat_alloc_context();
-    int ret = avformat_open_input(&ps,filename,NULL,NULL);
-    LOGD("demux avformat_open_input ret=%d",ret);
-    int videoInex = -1;
-    int audioInex = -1;
-    if (ret ==0 ){
-        ret = avformat_find_stream_info(ps,NULL);
-        LOGD("demux avformat_find_stream_info ret=%d",ret);
-        if(ret >=0){
-//            LOGD("demux avformat_find_stream_info ps->nb_streams=%d",ps->nb_streams);
-//            for(int i=0;i<ps->nb_streams;i++){
-//                AVStream *st = ps->streams[i];
-//                if (st != NULL){
-//                 //   LOGD("demux avformat_find_stream_info st->codecpar->codec_type=%d",st->codecpar->codec_type);
-//                    if(st->codecpar->codec_type ==AVMEDIA_TYPE_VIDEO){
-//                        videoInex = i;
-//                    }
-//
-//                    if(st->codecpar->codec_type ==AVMEDIA_TYPE_AUDIO){
-//                        audioInex=i;
-//                    }
-//                }
-//            }
-            AVPacket* avPacket = av_packet_alloc();
-            av_init_packet(avPacket);
-            avPacket->data = NULL;
-            avPacket->size=0;
-            while (av_read_frame(ps,avPacket)>=0){
-                AVPacket *orig = avPacket;
-                do{
-                    if(ret<0){
-                        break;
-                    }
-                    avPacket->data+=ret;
-                    avPacket->size-=ret;
-                } while (avPacket->size>0);
-                av_packet_unref(orig);
-            }
-
-        }
-    }
-    avformat_close_input(&ps);
+    example_demux(filename);
     env->ReleaseStringUTFChars(file_path, filename);
     return 0;
 }

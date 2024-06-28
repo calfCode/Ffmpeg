@@ -16,5 +16,5 @@
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR , TAG, __VA_ARGS__)
 
 int getVersion();
-
+int example_demux (const char *filePath);
 #endif //SKYAPP_FFMPEG_H
