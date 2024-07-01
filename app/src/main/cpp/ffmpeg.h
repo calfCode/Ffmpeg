@@ -19,4 +19,5 @@ int getVersion();
 int example_demux (const char *filePath);
 int example_remux (const char *filePath);
 int example_avio_reading (const char *filePath);
+int example_decode (const char *filePath);
 #endif //SKYAPP_FFMPEG_H

@@ -5,4 +5,5 @@ public enum TestType {
     DEMUX,
     REMUX,
     AVIO_READ,
+    DECODE,
 }

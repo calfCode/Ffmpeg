@@ -5,7 +5,6 @@
 #include "ffmpeg.h"
 
 
-
 #include <csignal>
 #include <csetjmp>
 
@@ -24,7 +23,9 @@ extern "C" {
 #ifdef __cplusplus
 }
 #endif
+
 #include <thread>
+
 //#define LOGD(...) __android_log_print(ANDROID_LOG_DEBUG , TAG, __VA_ARGS__)
 static AVFormatContext *pFormatCtx = NULL;
 static int tryTimes = 0;
@@ -34,8 +35,8 @@ static int tryTimes = 0;
 
 #define SCALE_FLAGS SWS_BICUBIC
 
-int getVersion(){
-   int version =  avutil_version();
+int getVersion() {
+    int version = avutil_version();
     return version;
 }
 
@@ -51,7 +52,7 @@ static FILE *video_dst_file = NULL;
 static FILE *audio_dst_file = NULL;
 
 static uint8_t *video_dst_data[4] = {NULL};
-static int      video_dst_linesize[4];
+static int video_dst_linesize[4];
 static int video_dst_bufsize;
 
 static int video_stream_idx = -1, audio_stream_idx = -1;
@@ -60,25 +61,24 @@ static AVPacket *pkt = NULL;
 static int video_frame_count = 0;
 static int audio_frame_count = 0;
 
-static int output_video_frame(AVFrame *frame)
-{
+static int output_video_frame(AVFrame *frame) {
     if (frame->width != width || frame->height != height ||
         frame->format != pix_fmt) {
         /* To handle this change, one could call av_image_alloc again and
          * decode the following frames into another rawvideo file. */
         LOGE("Error: Width, height and pixel format have to be "
-                        "constant in a rawvideo file, but the width, height or "
-                        "pixel format of the input video changed:\n"
-                        "old: width = %d, height = %d, format = %s\n"
-                        "new: width = %d, height = %d, format = %s\n",
-                width, height, av_get_pix_fmt_name(pix_fmt),
-                frame->width, frame->height,
-                av_get_pix_fmt_name((AVPixelFormat)frame->format));
+             "constant in a rawvideo file, but the width, height or "
+             "pixel format of the input video changed:\n"
+             "old: width = %d, height = %d, format = %s\n"
+             "new: width = %d, height = %d, format = %s\n",
+             width, height, av_get_pix_fmt_name(pix_fmt),
+             frame->width, frame->height,
+             av_get_pix_fmt_name((AVPixelFormat) frame->format));
         return -1;
     }
 
     LOGD("video_frame n:%d\n",
-           video_frame_count++);
+         video_frame_count++);
 
     /* copy decoded frame to destination buffer:
      * this is required since rawvideo expects non aligned data */
@@ -93,13 +93,13 @@ static int output_video_frame(AVFrame *frame)
     return 0;
 }
 
-static int output_audio_frame(AVFrame *frame)
-{
+static int output_audio_frame(AVFrame *frame) {
     // 计算音频帧大小
-    size_t unpadded_linesize = frame->nb_samples * av_get_bytes_per_sample((AVSampleFormat)frame->format);
+    size_t unpadded_linesize =
+            frame->nb_samples * av_get_bytes_per_sample((AVSampleFormat) frame->format);
     LOGD("audio_frame n:%d nb_samples:%d pts:%s\n",
-           audio_frame_count++, frame->nb_samples,
-           av_ts2timestr(frame->pts, &audio_dec_ctx->time_base));
+         audio_frame_count++, frame->nb_samples,
+         av_ts2timestr(frame->pts, &audio_dec_ctx->time_base));
 
     /* Write the raw audio data samples of the first plane. This works
      * fine for packed formats (e.g. AV_SAMPLE_FMT_S16). However,
@@ -115,8 +115,7 @@ static int output_audio_frame(AVFrame *frame)
     return 0;
 }
 
-static int decode_packet(AVCodecContext *dec, const AVPacket *pkt)
-{
+static int decode_packet(AVCodecContext *dec, const AVPacket *pkt) {
     int ret = 0;
 
     // submit the packet to the decoder
@@ -153,8 +152,8 @@ static int decode_packet(AVCodecContext *dec, const AVPacket *pkt)
 }
 
 static int open_codec_context(int *stream_idx,
-                              AVCodecContext **dec_ctx, AVFormatContext *fmt_ctx, enum AVMediaType type)
-{
+                              AVCodecContext **dec_ctx, AVFormatContext *fmt_ctx,
+                              enum AVMediaType type) {
     int ret, stream_index;
     AVStream *st;
     const AVCodec *dec = NULL;
@@ -162,7 +161,7 @@ static int open_codec_context(int *stream_idx,
     ret = av_find_best_stream(fmt_ctx, type, -1, -1, NULL, 0);// 根据媒体类型获取最匹配的流，返回流索引
     if (ret < 0) {
         LOGE("Could not find %s stream in input file '%s'\n",
-                av_get_media_type_string(type), src_filename);
+             av_get_media_type_string(type), src_filename);
         return ret;
     } else {
         stream_index = ret;
@@ -172,7 +171,7 @@ static int open_codec_context(int *stream_idx,
         dec = avcodec_find_decoder(st->codecpar->codec_id);// 根据流的codec id获取解码器
         if (!dec) {
             LOGE("Failed to find %s codec\n",
-                    av_get_media_type_string(type));
+                 av_get_media_type_string(type));
             return AVERROR(EINVAL);
         }
 
@@ -180,7 +179,7 @@ static int open_codec_context(int *stream_idx,
         *dec_ctx = avcodec_alloc_context3(dec);// 获取解码器的上下文
         if (!*dec_ctx) {
             LOGE("Failed to allocate the %s codec context\n",
-                    av_get_media_type_string(type));
+                 av_get_media_type_string(type));
             return AVERROR(ENOMEM);
         }
 
@@ -188,7 +187,7 @@ static int open_codec_context(int *stream_idx,
         // 复制流的codec参数到解码器的上下文
         if ((ret = avcodec_parameters_to_context(*dec_ctx, st->codecpar)) < 0) {
             LOGE("Failed to copy %s codec parameters to decoder context\n",
-                    av_get_media_type_string(type));
+                 av_get_media_type_string(type));
             return ret;
         }
 
@@ -196,7 +195,7 @@ static int open_codec_context(int *stream_idx,
         // 初始化解码器
         if ((ret = avcodec_open2(*dec_ctx, dec, NULL)) < 0) {
             LOGE("Failed to open %s codec\n",
-                    av_get_media_type_string(type));
+                 av_get_media_type_string(type));
             return ret;
         }
         *stream_idx = stream_index;
@@ -206,17 +205,17 @@ static int open_codec_context(int *stream_idx,
 }
 
 static int get_format_from_sample_fmt(const char **fmt,
-                                      enum AVSampleFormat sample_fmt)
-{
+                                      enum AVSampleFormat sample_fmt) {
     int i;
     struct sample_fmt_entry {
-        enum AVSampleFormat sample_fmt; const char *fmt_be, *fmt_le;
+        enum AVSampleFormat sample_fmt;
+        const char *fmt_be, *fmt_le;
     } sample_fmt_entries[] = {
-            { AV_SAMPLE_FMT_U8,  "u8",    "u8"    },
-            { AV_SAMPLE_FMT_S16, "s16be", "s16le" },
-            { AV_SAMPLE_FMT_S32, "s32be", "s32le" },
-            { AV_SAMPLE_FMT_FLT, "f32be", "f32le" },
-            { AV_SAMPLE_FMT_DBL, "f64be", "f64le" },
+            {AV_SAMPLE_FMT_U8,  "u8",    "u8"},
+            {AV_SAMPLE_FMT_S16, "s16be", "s16le"},
+            {AV_SAMPLE_FMT_S32, "s32be", "s32le"},
+            {AV_SAMPLE_FMT_FLT, "f32be", "f32le"},
+            {AV_SAMPLE_FMT_DBL, "f64be", "f64le"},
     };
     *fmt = NULL;
 
@@ -234,8 +233,7 @@ static int get_format_from_sample_fmt(const char **fmt,
     return -1;
 }
 
-int example_demux (const char *filePath)
-{
+int example_demux(const char *filePath) {
     int ret = 0;
 
     src_filename = filePath;
@@ -343,9 +341,9 @@ int example_demux (const char *filePath)
     if (video_stream) {
         // 提示如何使用ffplay播放裸视频流
         LOGD("Play the output video file with the command:\n"
-               "ffplay -f rawvideo -pix_fmt %s -video_size %dx%d %s\n",
-               av_get_pix_fmt_name(pix_fmt), width, height,
-               video_dst_filename);
+             "ffplay -f rawvideo -pix_fmt %s -video_size %dx%d %s\n",
+             av_get_pix_fmt_name(pix_fmt), width, height,
+             video_dst_filename);
     }
 
     if (audio_stream) {
@@ -356,8 +354,8 @@ int example_demux (const char *filePath)
         if (av_sample_fmt_is_planar(sfmt)) {
             const char *packed = av_get_sample_fmt_name(sfmt);
             LOGD("Warning: the sample format the decoder produced is planar "
-                   "(%s). This example will output the first channel only.\n",
-                   packed ? packed : "?");
+                 "(%s). This example will output the first channel only.\n",
+                 packed ? packed : "?");
             sfmt = av_get_packed_sample_fmt(sfmt);
             n_channels = 1;
         }
@@ -366,9 +364,9 @@ int example_demux (const char *filePath)
             goto end;
 // 提示如何使用ffplay播放裸音频流
         LOGD("Play the output audio file with the command:\n"
-               "ffplay -f %s -ac %d -ar %d %s\n",
-               fmt, n_channels, audio_dec_ctx->sample_rate,
-               audio_dst_filename);
+             "ffplay -f %s -ac %d -ar %d %s\n",
+             fmt, n_channels, audio_dec_ctx->sample_rate,
+             audio_dst_filename);
     }
 
     // 释放资源
@@ -387,20 +385,18 @@ int example_demux (const char *filePath)
     return ret < 0;
 }
 
-static void log_packet(const AVFormatContext *fmt_ctx, const AVPacket *pkt, const char *tag)
-{
+static void log_packet(const AVFormatContext *fmt_ctx, const AVPacket *pkt, const char *tag) {
     AVRational *time_base = &fmt_ctx->streams[pkt->stream_index]->time_base;
 
     LOGD("%s: pts:%s pts_time:%s dts:%s dts_time:%s duration:%s duration_time:%s stream_index:%d\n",
-           tag,
-           av_ts2str(pkt->pts), av_ts2timestr(pkt->pts, time_base),
-           av_ts2str(pkt->dts), av_ts2timestr(pkt->dts, time_base),
-           av_ts2str(pkt->duration), av_ts2timestr(pkt->duration, time_base),
-           pkt->stream_index);
+         tag,
+         av_ts2str(pkt->pts), av_ts2timestr(pkt->pts, time_base),
+         av_ts2str(pkt->dts), av_ts2timestr(pkt->dts, time_base),
+         av_ts2str(pkt->duration), av_ts2timestr(pkt->duration, time_base),
+         pkt->stream_index);
 }
 
-int example_remux (const char *filePath)
-{
+int example_remux(const char *filePath) {
     const AVOutputFormat *ofmt = NULL;
     AVFormatContext *ifmt_ctx = NULL, *ofmt_ctx = NULL;
     AVPacket *pkt = NULL;
@@ -411,23 +407,23 @@ int example_remux (const char *filePath)
     int stream_mapping_size = 0;
 
 
-    in_filename  = filePath;
+    in_filename = filePath;
     out_filename = "/storage/emulated/0/DCIM/test701_0seconds.mp4";
 
     pkt = av_packet_alloc();// 分配包
     if (!pkt) {
-       LOGE("Could not allocate AVPacket\n");
+        LOGE("Could not allocate AVPacket\n");
         return 1;
     }
     //读取文件头，获取封装格式相关信息存储到ifmt_ctx中
     if ((ret = avformat_open_input(&ifmt_ctx, in_filename, 0, 0)) < 0) {
-       LOGE("Could not open input file '%s'", in_filename);
+        LOGE("Could not open input file '%s'", in_filename);
         goto end;
     }
     // 解码一段数据，获取流相关信息，将取到的流信息填入AVFormatContext.streams中。
     // AVFormatContext.streams是一个指针数组，数组大小是AVFormatContext.nb_streams
     if ((ret = avformat_find_stream_info(ifmt_ctx, 0)) < 0) { // 查找输入文件的流
-       LOGE("Failed to retrieve input stream information");
+        LOGE("Failed to retrieve input stream information");
         goto end;
     }
 
@@ -435,13 +431,13 @@ int example_remux (const char *filePath)
 // 2.1 分配输出ctx
     avformat_alloc_output_context2(&ofmt_ctx, NULL, NULL, out_filename);// 分配输出AVFormatContext
     if (!ofmt_ctx) {
-       LOGE("Could not create output context\n");
+        LOGE("Could not create output context\n");
         ret = AVERROR_UNKNOWN;
         goto end;
     }
 
     stream_mapping_size = ifmt_ctx->nb_streams;
-    stream_mapping = (int*)av_calloc(stream_mapping_size, sizeof(*stream_mapping));
+    stream_mapping = (int *) av_calloc(stream_mapping_size, sizeof(*stream_mapping));
     if (!stream_mapping) {
         ret = AVERROR(ENOMEM);
         goto end;
@@ -461,20 +457,20 @@ int example_remux (const char *filePath)
             continue;
         }
         int64_t timeStart = av_rescale_q(0 * AV_TIME_BASE, AV_TIME_BASE_Q, in_stream->time_base);
-        av_seek_frame(ifmt_ctx,stream_index,timeStart,AVSEEK_FLAG_BACKWARD);
+        av_seek_frame(ifmt_ctx, stream_index, timeStart, AVSEEK_FLAG_BACKWARD);
         stream_mapping[i] = stream_index++;
 
         // 2.2 将一个新流(out_stream)添加到输出文件(ofmt_ctx)
         out_stream = avformat_new_stream(ofmt_ctx, NULL);
         if (!out_stream) {
-           LOGE("Failed allocating output stream\n");
+            LOGE("Failed allocating output stream\n");
             ret = AVERROR_UNKNOWN;
             goto end;
         }
         // 2.3 将当前输入流中的参数拷贝到输出流中
         ret = avcodec_parameters_copy(out_stream->codecpar, in_codecpar);
         if (ret < 0) {
-           LOGE("Failed to copy codec parameters\n");
+            LOGE("Failed to copy codec parameters\n");
             goto end;
         }
         out_stream->codecpar->codec_tag = 0;
@@ -485,14 +481,14 @@ int example_remux (const char *filePath)
         // 2.4 创建并初始化一个AVIOContext，用以访问URL(out_filename)指定的资源
         ret = avio_open(&ofmt_ctx->pb, out_filename, AVIO_FLAG_WRITE);
         if (ret < 0) {
-           LOGE("Could not open output file '%s'", out_filename);
+            LOGE("Could not open output file '%s'", out_filename);
             goto end;
         }
     }
 // 3.1 写输出文件头
     ret = avformat_write_header(ofmt_ctx, NULL);
     if (ret < 0) {
-       LOGE("Error occurred when opening output file\n");
+        LOGE("Error occurred when opening output file\n");
         goto end;
     }
 
@@ -512,7 +508,7 @@ int example_remux (const char *filePath)
         if (ret < 0)
             break;
 
-        in_stream  = ifmt_ctx->streams[pkt->stream_index];
+        in_stream = ifmt_ctx->streams[pkt->stream_index];
         if (pkt->stream_index >= stream_mapping_size ||
             stream_mapping[pkt->stream_index] < 0) {
             av_packet_unref(pkt);
@@ -543,7 +539,7 @@ int example_remux (const char *filePath)
          * its contents and resets pkt), so that no unreferencing is necessary.
          * This would be different if one used av_write_frame(). */
         if (ret < 0) {
-           LOGE("Error muxing packet\n");
+            LOGE("Error muxing packet\n");
             break;
         }
     }
@@ -562,7 +558,7 @@ int example_remux (const char *filePath)
     av_freep(&stream_mapping);
 
     if (ret < 0 && ret != AVERROR_EOF) {
-       LOGE("Error occurred: %s\n", av_err2str(ret));
+        LOGE("Error occurred: %s\n", av_err2str(ret));
         return 1;
     }
 
@@ -575,9 +571,8 @@ struct buffer_data {
     size_t size; ///< size left in the buffer
 };
 
-static int read_packet(void *opaque, uint8_t *buf, int buf_size)
-{
-    struct buffer_data *bd = (struct buffer_data *)opaque;
+static int read_packet(void *opaque, uint8_t *buf, int buf_size) {
+    struct buffer_data *bd = (struct buffer_data *) opaque;
     buf_size = FFMIN(buf_size, bd->size);
 
     if (!buf_size)
@@ -586,24 +581,23 @@ static int read_packet(void *opaque, uint8_t *buf, int buf_size)
 
     /* copy internal buffer data to buf */
     memcpy(buf, bd->ptr, buf_size);
-    bd->ptr  += buf_size;
+    bd->ptr += buf_size;
     bd->size -= buf_size;
 
     return buf_size;
 }
 
-int example_avio_reading (const char *filePath)
-{
+int example_avio_reading(const char *filePath) {
     AVFormatContext *fmt_ctx = NULL;
     AVIOContext *avio_ctx = NULL;
     uint8_t *buffer = NULL, *avio_ctx_buffer = NULL;
     size_t buffer_size, avio_ctx_buffer_size = 4096;
     char *input_filename = NULL;
     int ret = 0;
-    struct buffer_data bd = { 0 };
+    struct buffer_data bd = {0};
 
 
-    input_filename = (char*)filePath;
+    input_filename = (char *) filePath;
 
     /* slurp file content into buffer */
     // 将输入文件的数据映射到内存buffer中
@@ -612,7 +606,7 @@ int example_avio_reading (const char *filePath)
         goto end;
 
     /* fill opaque structure used by the AVIOContext read callback */
-    bd.ptr  = buffer;
+    bd.ptr = buffer;
     bd.size = buffer_size;
     // 申请AVFormatContext
     if (!(fmt_ctx = avformat_alloc_context())) {
@@ -620,7 +614,7 @@ int example_avio_reading (const char *filePath)
         goto end;
     }
 
-    avio_ctx_buffer = (uint8_t*)av_malloc(avio_ctx_buffer_size);
+    avio_ctx_buffer = (uint8_t *) av_malloc(avio_ctx_buffer_size);
     if (!avio_ctx_buffer) {
         ret = AVERROR(ENOMEM);
         goto end;
@@ -636,13 +630,13 @@ int example_avio_reading (const char *filePath)
     // 打开AVFormatContext
     ret = avformat_open_input(&fmt_ctx, NULL, NULL, NULL);
     if (ret < 0) {
-        LOGE( "Could not open input\n");
+        LOGE("Could not open input\n");
         goto end;
     }
     // 查找流
     ret = avformat_find_stream_info(fmt_ctx, NULL);
     if (ret < 0) {
-        LOGE( "Could not find stream information\n");
+        LOGE("Could not find stream information\n");
         goto end;
     }
 
@@ -659,8 +653,59 @@ int example_avio_reading (const char *filePath)
     av_file_unmap(buffer, buffer_size);
 
     if (ret < 0) {
-        LOGE( "Error occurred: %s\n", av_err2str(ret));
+        LOGE("Error occurred: %s\n", av_err2str(ret));
         return 1;
+    }
+
+    return 0;
+}
+
+int example_decode(const char *filePath) {
+    LOGD("example_decode");
+    AVFormatContext *avFormatContext;
+    // 关联avFormatContext到输入文件中
+    avformat_open_input(&avFormatContext, filePath, NULL, NULL);
+    if (!avFormatContext) {
+        LOGD("example_decode avformat_open_input fail");
+        return 0;
+    }
+    int nb_streams = avFormatContext->nb_streams;
+    AVCodecContext *vCodecContext;
+    AVCodecContext *aCodecContext;
+    LOGD("example_decode nb_streams=%d", nb_streams);
+    for (int i = 0; i < nb_streams; i++) {
+        AVStream *avStream = avFormatContext->streams[i];
+        // 查找解码器
+        const AVCodec *avCodec = avcodec_find_decoder(avStream->codecpar->codec_id);
+        if (avCodec != NULL) {
+            LOGD("example_decode avCodec->name=%s", avCodec->name);
+            if (avCodec->type == AVMEDIA_TYPE_VIDEO) {
+                // 分配AVCodecContext
+                vCodecContext = avcodec_alloc_context3(avCodec);
+                if (vCodecContext) {
+                    LOGD("example_decode vCodecContext ok");
+                    // ffmpeg在解码或者获得音视频相关编码信息时，首先存储到AVCodecParameters中，然后对AVCodecParameters中存储的信息进行解析与处理
+                    // 所以为了兼容，需要将AVCodecParameters的参数同步至AVCodecContext中
+                    avcodec_parameters_to_context(vCodecContext, avStream->codecpar);
+                    int ret = avcodec_open2(vCodecContext, avCodec, NULL);
+                    if (ret < 0) {
+                        LOGD("example_decode avcodec_open2 vCodecContext ret=%d", ret);
+                    }
+                }
+            }
+            if (avCodec->type == AVMEDIA_TYPE_AUDIO) {
+                aCodecContext = avcodec_alloc_context3(avCodec);
+                if (aCodecContext) {
+                    LOGD("example_decode aCodecContext ok");
+                    avcodec_parameters_to_context(aCodecContext, avStream->codecpar);
+                    int ret = avcodec_open2(aCodecContext, avCodec, NULL);
+                    if (ret < 0) {
+                        LOGD("example_decode avcodec_open2 aCodecContext ret=%d", ret);
+                    }
+                }
+            }
+        }
+
     }
 
     return 0;

@@ -22,7 +22,7 @@ public class MainActivity extends AppCompatActivity {
 
     private ActivityMainBinding binding;
 
-    private TestType testType = TestType.AVIO_READ;
+    private TestType testType = TestType.DECODE;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -64,6 +64,11 @@ public class MainActivity extends AppCompatActivity {
             fileName = "test.mp4";
             filePath = "/data/user/0/" + pk + "/app_video/" + fileName;
             exampleAvioReading(filePath);
+        }else if(testType == TestType.DECODE){
+            AssectsUtil.loadAssetsDirfile(getApplicationContext(),"video");
+            fileName = "test.mp4";
+            filePath = "/data/user/0/" + pk + "/app_video/" + fileName;
+            exampleDecode(filePath);
         }
         Log.d(TAG, "filePath=" + filePath);
 
@@ -79,4 +84,5 @@ public class MainActivity extends AppCompatActivity {
 //    public native int demuxExample(String filePath);
     public native int exampleRemux(String filePath);
     public native int exampleAvioReading(String filePath);
+    public native int exampleDecode(String filePath);
 }
