@@ -659,10 +659,21 @@ Java_com_smartdevice_ffmpeg_MainActivity_demux(JNIEnv *env, jobject thiz, jstrin
 }
 extern "C"
 JNIEXPORT jint JNICALL
-Java_com_smartdevice_ffmpeg_MainActivity_remux(JNIEnv *env, jobject thiz, jstring file_path) {
+Java_com_smartdevice_ffmpeg_MainActivity_exampleRemux(JNIEnv *env, jobject thiz,
+                                                      jstring file_path) {
     const char *filename = env->GetStringUTFChars(file_path, 0);
     LOGD("remux filename=%s",filename);
     example_remux(filename);
+    env->ReleaseStringUTFChars(file_path, filename);
+    return 0;
+}
+extern "C"
+JNIEXPORT jint JNICALL
+Java_com_smartdevice_ffmpeg_MainActivity_exampleAvioReading(JNIEnv *env, jobject thiz,
+                                                            jstring file_path) {
+    const char *filename = env->GetStringUTFChars(file_path, 0);
+    LOGD("AvioReading filename=%s",filename);
+    example_avio_reading(filename);
     env->ReleaseStringUTFChars(file_path, filename);
     return 0;
 }

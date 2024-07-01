@@ -5,6 +5,7 @@
 #include "ffmpeg.h"
 
 
+
 #include <csignal>
 #include <csetjmp>
 
@@ -18,6 +19,8 @@ extern "C" {
 #include "libavutil/imgutils.h"
 #include <libavutil/channel_layout.h>
 #include "libavutil/timestamp.h"
+#include "libavutil/mem.h"
+#include "libavutil/file.h"
 #ifdef __cplusplus
 }
 #endif
@@ -74,7 +77,7 @@ static int output_video_frame(AVFrame *frame)
         return -1;
     }
 
-    printf("video_frame n:%d\n",
+    LOGD("video_frame n:%d\n",
            video_frame_count++);
 
     /* copy decoded frame to destination buffer:
@@ -384,13 +387,11 @@ int example_demux (const char *filePath)
     return ret < 0;
 }
 
-
-
 static void log_packet(const AVFormatContext *fmt_ctx, const AVPacket *pkt, const char *tag)
 {
     AVRational *time_base = &fmt_ctx->streams[pkt->stream_index]->time_base;
 
-    printf("%s: pts:%s pts_time:%s dts:%s dts_time:%s duration:%s duration_time:%s stream_index:%d\n",
+    LOGD("%s: pts:%s pts_time:%s dts:%s dts_time:%s duration:%s duration_time:%s stream_index:%d\n",
            tag,
            av_ts2str(pkt->pts), av_ts2timestr(pkt->pts, time_base),
            av_ts2str(pkt->dts), av_ts2timestr(pkt->dts, time_base),
@@ -398,7 +399,7 @@ static void log_packet(const AVFormatContext *fmt_ctx, const AVPacket *pkt, cons
            pkt->stream_index);
 }
 
-int example_remux(const char *filePath)
+int example_remux (const char *filePath)
 {
     const AVOutputFormat *ofmt = NULL;
     AVFormatContext *ifmt_ctx = NULL, *ofmt_ctx = NULL;
@@ -410,37 +411,37 @@ int example_remux(const char *filePath)
     int stream_mapping_size = 0;
 
 
-    const char* out_fileName ="/storage/emulated/0/DCIM/test1.mp4";
     in_filename  = filePath;
-    out_filename = out_fileName;
+    out_filename = "/storage/emulated/0/DCIM/test701_0seconds.mp4";
 
-    pkt = av_packet_alloc();
+    pkt = av_packet_alloc();// 分配包
     if (!pkt) {
-        LOGE( "Could not allocate AVPacket\n");
+       LOGE("Could not allocate AVPacket\n");
         return 1;
     }
-
+    //读取文件头，获取封装格式相关信息存储到ifmt_ctx中
     if ((ret = avformat_open_input(&ifmt_ctx, in_filename, 0, 0)) < 0) {
-        LOGE( "Could not open input file '%s'", in_filename);
+       LOGE("Could not open input file '%s'", in_filename);
         goto end;
     }
-
-    if ((ret = avformat_find_stream_info(ifmt_ctx, 0)) < 0) {
-        LOGE( "Failed to retrieve input stream information");
+    // 解码一段数据，获取流相关信息，将取到的流信息填入AVFormatContext.streams中。
+    // AVFormatContext.streams是一个指针数组，数组大小是AVFormatContext.nb_streams
+    if ((ret = avformat_find_stream_info(ifmt_ctx, 0)) < 0) { // 查找输入文件的流
+       LOGE("Failed to retrieve input stream information");
         goto end;
     }
 
     av_dump_format(ifmt_ctx, 0, in_filename, 0);
-
-    avformat_alloc_output_context2(&ofmt_ctx, NULL, NULL, out_filename);
+// 2.1 分配输出ctx
+    avformat_alloc_output_context2(&ofmt_ctx, NULL, NULL, out_filename);// 分配输出AVFormatContext
     if (!ofmt_ctx) {
-        LOGE( "Could not create output context\n");
+       LOGE("Could not create output context\n");
         ret = AVERROR_UNKNOWN;
         goto end;
     }
 
     stream_mapping_size = ifmt_ctx->nb_streams;
-    stream_mapping = (int *)av_calloc(stream_mapping_size, sizeof(*stream_mapping));
+    stream_mapping = (int*)av_calloc(stream_mapping_size, sizeof(*stream_mapping));
     if (!stream_mapping) {
         ret = AVERROR(ENOMEM);
         goto end;
@@ -451,7 +452,7 @@ int example_remux(const char *filePath)
     for (i = 0; i < ifmt_ctx->nb_streams; i++) {
         AVStream *out_stream;
         AVStream *in_stream = ifmt_ctx->streams[i];
-        AVCodecParameters *in_codecpar = in_stream->codecpar;
+        AVCodecParameters *in_codecpar = in_stream->codecpar; /* 用于记录编码后的流信息，即通道中存储的流的编码信息 */
 
         if (in_codecpar->codec_type != AVMEDIA_TYPE_AUDIO &&
             in_codecpar->codec_type != AVMEDIA_TYPE_VIDEO &&
@@ -459,19 +460,21 @@ int example_remux(const char *filePath)
             stream_mapping[i] = -1;
             continue;
         }
-
+        int64_t timeStart = av_rescale_q(0 * AV_TIME_BASE, AV_TIME_BASE_Q, in_stream->time_base);
+        av_seek_frame(ifmt_ctx,stream_index,timeStart,AVSEEK_FLAG_BACKWARD);
         stream_mapping[i] = stream_index++;
 
+        // 2.2 将一个新流(out_stream)添加到输出文件(ofmt_ctx)
         out_stream = avformat_new_stream(ofmt_ctx, NULL);
         if (!out_stream) {
-            LOGE( "Failed allocating output stream\n");
+           LOGE("Failed allocating output stream\n");
             ret = AVERROR_UNKNOWN;
             goto end;
         }
-
+        // 2.3 将当前输入流中的参数拷贝到输出流中
         ret = avcodec_parameters_copy(out_stream->codecpar, in_codecpar);
         if (ret < 0) {
-            LOGE( "Failed to copy codec parameters\n");
+           LOGE("Failed to copy codec parameters\n");
             goto end;
         }
         out_stream->codecpar->codec_tag = 0;
@@ -479,23 +482,33 @@ int example_remux(const char *filePath)
     av_dump_format(ofmt_ctx, 0, out_filename, 1);
 
     if (!(ofmt->flags & AVFMT_NOFILE)) {
+        // 2.4 创建并初始化一个AVIOContext，用以访问URL(out_filename)指定的资源
         ret = avio_open(&ofmt_ctx->pb, out_filename, AVIO_FLAG_WRITE);
         if (ret < 0) {
-            LOGE( "Could not open output file '%s'", out_filename);
+           LOGE("Could not open output file '%s'", out_filename);
             goto end;
         }
     }
-
+// 3.1 写输出文件头
     ret = avformat_write_header(ofmt_ctx, NULL);
     if (ret < 0) {
-        LOGE( "Error occurred when opening output file\n");
+       LOGE("Error occurred when opening output file\n");
         goto end;
     }
 
-    while (1) {
-        AVStream *in_stream, *out_stream;
 
-        ret = av_read_frame(ifmt_ctx, pkt);
+    while (1) {
+        // AVStream.time_base是AVPacket中pts和dts的时间单位，输入流与输出流中time_base按如下方式确定：
+        // 对于输入流：打开输入文件后，调用avformat_find_stream_info()可获取到每个流中的time_base
+        // 对于输出流：打开输出文件后，调用avformat_write_header()可根据输出文件封装格式确定每个流的time_base并写入输出文件中
+
+        AVStream *in_stream, *out_stream;
+        // 3.2
+        // 从输入流读取一个packet，对于视频来说，一个packet只包含一个视频帧；
+        // 对于音频来说，若是帧长固定的格式则一个packet可包含整数个音频帧，
+        // 若是帧长可变的格式则一个packet只包含一个音频帧
+
+        ret = av_read_frame(ifmt_ctx, pkt); // 从输入文件读取frame
         if (ret < 0)
             break;
 
@@ -511,16 +524,26 @@ int example_remux(const char *filePath)
         log_packet(ifmt_ctx, pkt, "in");
 
         /* copy packet */
+        /* 3.3 更新packet中的pts和dts
+   关于AVStream.time_base的说明：
+   输入：输入流中含有time_base，在avformat_find_stream_info()中可取到每个流中的time_base
+   输出：avformat_write_header()会根据输出的封装格式确定每个流的time_base并写入文件中
+   AVPacket.pts和AVPacket.dts的单位是AVStream.time_base，不同的封装格式其AVStream.time_base不同
+   所以输出文件中，每个packet需要根据输出封装格式重新计算pts和dts
+ */
+        /* 将packet中的各时间值从输入流封装格式时间基转换到输出流封装格式时间基 */
         av_packet_rescale_ts(pkt, in_stream->time_base, out_stream->time_base);
         pkt->pos = -1;
         log_packet(ofmt_ctx, pkt, "out");
 
+
+        // 3.4 将packet写入输出，确保输出媒体中不同流的packet能按照dts增长的顺序正确交织
         ret = av_interleaved_write_frame(ofmt_ctx, pkt);
         /* pkt is now blank (av_interleaved_write_frame() takes ownership of
          * its contents and resets pkt), so that no unreferencing is necessary.
          * This would be different if one used av_write_frame(). */
         if (ret < 0) {
-            LOGE( "Error muxing packet\n");
+           LOGE("Error muxing packet\n");
             break;
         }
     }
@@ -539,9 +562,111 @@ int example_remux(const char *filePath)
     av_freep(&stream_mapping);
 
     if (ret < 0 && ret != AVERROR_EOF) {
+       LOGE("Error occurred: %s\n", av_err2str(ret));
+        return 1;
+    }
+
+    return 0;
+}
+
+
+struct buffer_data {
+    uint8_t *ptr;
+    size_t size; ///< size left in the buffer
+};
+
+static int read_packet(void *opaque, uint8_t *buf, int buf_size)
+{
+    struct buffer_data *bd = (struct buffer_data *)opaque;
+    buf_size = FFMIN(buf_size, bd->size);
+
+    if (!buf_size)
+        return AVERROR_EOF;
+    LOGD("ptr:%p size:%zu\n", bd->ptr, bd->size);
+
+    /* copy internal buffer data to buf */
+    memcpy(buf, bd->ptr, buf_size);
+    bd->ptr  += buf_size;
+    bd->size -= buf_size;
+
+    return buf_size;
+}
+
+int example_avio_reading (const char *filePath)
+{
+    AVFormatContext *fmt_ctx = NULL;
+    AVIOContext *avio_ctx = NULL;
+    uint8_t *buffer = NULL, *avio_ctx_buffer = NULL;
+    size_t buffer_size, avio_ctx_buffer_size = 4096;
+    char *input_filename = NULL;
+    int ret = 0;
+    struct buffer_data bd = { 0 };
+
+
+    input_filename = (char*)filePath;
+
+    /* slurp file content into buffer */
+    // 将输入文件的数据映射到内存buffer中
+    ret = av_file_map(input_filename, &buffer, &buffer_size, 0, NULL);
+    if (ret < 0)
+        goto end;
+
+    /* fill opaque structure used by the AVIOContext read callback */
+    bd.ptr  = buffer;
+    bd.size = buffer_size;
+    // 申请AVFormatContext
+    if (!(fmt_ctx = avformat_alloc_context())) {
+        ret = AVERROR(ENOMEM);
+        goto end;
+    }
+
+    avio_ctx_buffer = (uint8_t*)av_malloc(avio_ctx_buffer_size);
+    if (!avio_ctx_buffer) {
+        ret = AVERROR(ENOMEM);
+        goto end;
+    }
+    // 申请AVIOContext,同时将内存数据读取的回调接口注册给AVIOContext
+    avio_ctx = avio_alloc_context(avio_ctx_buffer, avio_ctx_buffer_size,
+                                  0, &bd, &read_packet, NULL, NULL);
+    if (!avio_ctx) {
+        ret = AVERROR(ENOMEM);
+        goto end;
+    }
+    fmt_ctx->pb = avio_ctx;
+    // 打开AVFormatContext
+    ret = avformat_open_input(&fmt_ctx, NULL, NULL, NULL);
+    if (ret < 0) {
+        LOGE( "Could not open input\n");
+        goto end;
+    }
+    // 查找流
+    ret = avformat_find_stream_info(fmt_ctx, NULL);
+    if (ret < 0) {
+        LOGE( "Could not find stream information\n");
+        goto end;
+    }
+
+    av_dump_format(fmt_ctx, 0, input_filename, 0);
+
+    end:
+    avformat_close_input(&fmt_ctx);
+
+    /* note: the internal buffer could have changed, and be != avio_ctx_buffer */
+    if (avio_ctx)
+        av_freep(&avio_ctx->buffer);
+    avio_context_free(&avio_ctx);
+
+    av_file_unmap(buffer, buffer_size);
+
+    if (ret < 0) {
         LOGE( "Error occurred: %s\n", av_err2str(ret));
         return 1;
     }
 
     return 0;
 }
+
+
+
+
+

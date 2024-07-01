@@ -22,7 +22,7 @@ public class MainActivity extends AppCompatActivity {
 
     private ActivityMainBinding binding;
 
-    private TestType testType = TestType.REMUX;
+    private TestType testType = TestType.AVIO_READ;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -54,11 +54,16 @@ public class MainActivity extends AppCompatActivity {
             fileName = "test.mp4";
             filePath = "/data/user/0/" + pk + "/app_video/" + fileName;
             demux(filePath);
-        } else if (testType == TestType.REMUX) {
+        }else if(testType == TestType.REMUX){
             AssectsUtil.loadAssetsDirfile(getApplicationContext(),"video");
             fileName = "test.mp4";
             filePath = "/data/user/0/" + pk + "/app_video/" + fileName;
-            remux(filePath);
+            exampleRemux(filePath);
+        } else if(testType == TestType.AVIO_READ){
+            AssectsUtil.loadAssetsDirfile(getApplicationContext(),"video");
+            fileName = "test.mp4";
+            filePath = "/data/user/0/" + pk + "/app_video/" + fileName;
+            exampleAvioReading(filePath);
         }
         Log.d(TAG, "filePath=" + filePath);
 
@@ -70,7 +75,8 @@ public class MainActivity extends AppCompatActivity {
      */
     public native int mux(String filePath);
     public native int demux(String filePath);
-    public native int remux(String filePath);
-//    public native int demuxExample(String filePath);
 
+//    public native int demuxExample(String filePath);
+    public native int exampleRemux(String filePath);
+    public native int exampleAvioReading(String filePath);
 }

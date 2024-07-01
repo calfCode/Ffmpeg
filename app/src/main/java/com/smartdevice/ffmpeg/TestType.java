@@ -4,4 +4,5 @@ public enum TestType {
     MUX,
     DEMUX,
     REMUX,
+    AVIO_READ,
 }
