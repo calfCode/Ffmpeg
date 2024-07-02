@@ -660,55 +660,154 @@ int example_avio_reading(const char *filePath) {
     return 0;
 }
 
-int example_decode(const char *filePath) {
-    LOGD("example_decode");
-    AVFormatContext *avFormatContext;
-    // 关联avFormatContext到输入文件中
-    avformat_open_input(&avFormatContext, filePath, NULL, NULL);
-    if (!avFormatContext) {
-        LOGD("example_decode avformat_open_input fail");
-        return 0;
+int example_decode (const char *filePath)
+{
+    int ret = 0;
+
+
+    src_filename = filePath;
+    video_dst_filename = "/data/user/0/com.smartdevice.ffmpeg/app_video/out.v"; // 视频流保存路径
+    audio_dst_filename = "/data/user/0/com.smartdevice.ffmpeg/app_video/out.a";// 音频流保存路径
+
+    /* open input file, and allocate format context */
+    // 关联fmt_ctx到src_filename文件
+    if (avformat_open_input(&fmt_ctx, src_filename, NULL, NULL) < 0) {
+        fprintf(stderr, "Could not open source file %s\n", src_filename);
+        exit(1);
     }
-    int nb_streams = avFormatContext->nb_streams;
-    AVCodecContext *vCodecContext;
-    AVCodecContext *aCodecContext;
-    LOGD("example_decode nb_streams=%d", nb_streams);
-    for (int i = 0; i < nb_streams; i++) {
-        AVStream *avStream = avFormatContext->streams[i];
-        // 查找解码器
-        const AVCodec *avCodec = avcodec_find_decoder(avStream->codecpar->codec_id);
-        if (avCodec != NULL) {
-            LOGD("example_decode avCodec->name=%s", avCodec->name);
-            if (avCodec->type == AVMEDIA_TYPE_VIDEO) {
-                // 分配AVCodecContext
-                vCodecContext = avcodec_alloc_context3(avCodec);
-                if (vCodecContext) {
-                    LOGD("example_decode vCodecContext ok");
-                    // ffmpeg在解码或者获得音视频相关编码信息时，首先存储到AVCodecParameters中，然后对AVCodecParameters中存储的信息进行解析与处理
-                    // 所以为了兼容，需要将AVCodecParameters的参数同步至AVCodecContext中
-                    avcodec_parameters_to_context(vCodecContext, avStream->codecpar);
-                    int ret = avcodec_open2(vCodecContext, avCodec, NULL);
-                    if (ret < 0) {
-                        LOGD("example_decode avcodec_open2 vCodecContext ret=%d", ret);
-                    }
-                }
-            }
-            if (avCodec->type == AVMEDIA_TYPE_AUDIO) {
-                aCodecContext = avcodec_alloc_context3(avCodec);
-                if (aCodecContext) {
-                    LOGD("example_decode aCodecContext ok");
-                    avcodec_parameters_to_context(aCodecContext, avStream->codecpar);
-                    int ret = avcodec_open2(aCodecContext, avCodec, NULL);
-                    if (ret < 0) {
-                        LOGD("example_decode avcodec_open2 aCodecContext ret=%d", ret);
-                    }
-                }
-            }
+
+    /* retrieve stream information */
+    // 获取媒体 流信息
+    if (avformat_find_stream_info(fmt_ctx, NULL) < 0) {
+        fprintf(stderr, "Could not find stream information\n");
+        exit(1);
+    }
+
+    if (open_codec_context(&video_stream_idx, &video_dec_ctx, fmt_ctx, AVMEDIA_TYPE_VIDEO) >= 0) {
+        video_stream = fmt_ctx->streams[video_stream_idx];// 获取视频流
+        video_dst_file = fopen(video_dst_filename, "wb");// 打开文件
+        if (!video_dst_file) {
+            fprintf(stderr, "Could not open destination file %s\n", video_dst_filename);
+            ret = 1;
+            goto end;
         }
 
+        /* allocate image where the decoded image will be put */
+        width = video_dec_ctx->width;
+        height = video_dec_ctx->height;
+        pix_fmt = video_dec_ctx->pix_fmt;
+        ret = av_image_alloc(video_dst_data, video_dst_linesize,
+                             width, height, pix_fmt, 1);// 分配缓存空间，用于缓存解码后视频帧
+        if (ret < 0) {
+            fprintf(stderr, "Could not allocate raw video buffer\n");
+            goto end;
+        }
+        video_dst_bufsize = ret;
     }
 
-    return 0;
+    if (open_codec_context(&audio_stream_idx, &audio_dec_ctx, fmt_ctx, AVMEDIA_TYPE_AUDIO) >= 0) {
+        audio_stream = fmt_ctx->streams[audio_stream_idx];// 获取音频流
+        audio_dst_file = fopen(audio_dst_filename, "wb");// 打开文件
+        if (!audio_dst_file) {
+            fprintf(stderr, "Could not open destination file %s\n", audio_dst_filename);
+            ret = 1;
+            goto end;
+        }
+    }
+
+    /* dump input information to stderr */
+    av_dump_format(fmt_ctx, 0, src_filename, 0);
+
+    if (!audio_stream && !video_stream) {
+        fprintf(stderr, "Could not find audio or video stream in the input, aborting\n");
+        ret = 1;
+        goto end;
+    }
+
+    frame = av_frame_alloc();// 分配用于存储解码后的空间
+    if (!frame) {
+        fprintf(stderr, "Could not allocate frame\n");
+        ret = AVERROR(ENOMEM);
+        goto end;
+    }
+
+    pkt = av_packet_alloc();// 分配用于存储 读取媒体文件的空间
+    if (!pkt) {
+        fprintf(stderr, "Could not allocate packet\n");
+        ret = AVERROR(ENOMEM);
+        goto end;
+    }
+
+    if (video_stream)
+        printf("Demuxing video from file '%s' into '%s'\n", src_filename, video_dst_filename);
+    if (audio_stream)
+        printf("Demuxing audio from file '%s' into '%s'\n", src_filename, audio_dst_filename);
+
+    /* read frames from the file */
+    while (av_read_frame(fmt_ctx, pkt) >= 0) { // 从文件读取数
+        // check if the packet belongs to a stream we are interested in, otherwise
+        // skip it
+        // 根据数据类型，分别进行音视频解码
+        if (pkt->stream_index == video_stream_idx)
+            ret = decode_packet(video_dec_ctx, pkt);
+        else if (pkt->stream_index == audio_stream_idx)
+            ret = decode_packet(audio_dec_ctx, pkt);
+        av_packet_unref(pkt);
+        if (ret < 0)
+            break;
+    }
+
+    /* flush the decoders */
+    if (video_dec_ctx)
+        decode_packet(video_dec_ctx, NULL);
+    if (audio_dec_ctx)
+        decode_packet(audio_dec_ctx, NULL);
+
+    printf("Demuxing succeeded.\n");
+
+    if (video_stream) {
+        printf("Play the output video file with the command:\n"
+               "ffplay -f rawvideo -pix_fmt %s -video_size %dx%d %s\n",
+               av_get_pix_fmt_name(pix_fmt), width, height,
+               video_dst_filename);
+    }
+
+    if (audio_stream) {
+        enum AVSampleFormat sfmt = audio_dec_ctx->sample_fmt;
+        int n_channels = audio_dec_ctx->ch_layout.nb_channels;
+        const char *fmt;
+
+        if (av_sample_fmt_is_planar(sfmt)) {
+            const char *packed = av_get_sample_fmt_name(sfmt);
+            printf("Warning: the sample format the decoder produced is planar "
+                   "(%s). This example will output the first channel only.\n",
+                   packed ? packed : "?");
+            sfmt = av_get_packed_sample_fmt(sfmt);
+            n_channels = 1;
+        }
+
+        if ((ret = get_format_from_sample_fmt(&fmt, sfmt)) < 0)
+            goto end;
+
+        printf("Play the output audio file with the command:\n"
+               "ffplay -f %s -ac %d -ar %d %s\n",
+               fmt, n_channels, audio_dec_ctx->sample_rate,
+               audio_dst_filename);
+    }
+
+    end:
+    avcodec_free_context(&video_dec_ctx);
+    avcodec_free_context(&audio_dec_ctx);
+    avformat_close_input(&fmt_ctx);
+    if (video_dst_file)
+        fclose(video_dst_file);
+    if (audio_dst_file)
+        fclose(audio_dst_file);
+    av_packet_free(&pkt);
+    av_frame_free(&frame);
+    av_free(video_dst_data[0]);
+
+    return ret < 0;
 }
 
 
