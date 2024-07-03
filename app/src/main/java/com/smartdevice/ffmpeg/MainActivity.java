@@ -22,7 +22,7 @@ public class MainActivity extends AppCompatActivity {
 
     private ActivityMainBinding binding;
 
-    private TestType testType = TestType.DECODE;
+    private TestType testType = TestType.AUDIO_DECODE;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -69,6 +69,26 @@ public class MainActivity extends AppCompatActivity {
             fileName = "test.mp4";
             filePath = "/data/user/0/" + pk + "/app_video/" + fileName;
             exampleDecode(filePath);
+        }else if(testType == TestType.AUDIO_ENCODE){
+            AssectsUtil.loadAssetsDirfile(getApplicationContext(),"video");
+            fileName = "test.mp2";
+            filePath = "/data/user/0/" + pk + "/app_video/" + fileName;
+            exampleAudioEncode(filePath);
+        }else if(testType == TestType.VIDEO_ENCODE){
+            AssectsUtil.loadAssetsDirfile(getApplicationContext(),"video");
+            fileName = "test.v";
+            filePath = "/data/user/0/" + pk + "/app_video/" + fileName;
+            exampleVideoEncode(filePath);
+        }else if(testType == TestType.VIDEO_DECODE){
+            AssectsUtil.loadAssetsDirfile(getApplicationContext(),"video");
+            fileName = "test.v";
+            filePath = "/data/user/0/" + pk + "/app_video/" + fileName;
+            exampleVideoDecode(filePath);
+        }else if(testType == TestType.AUDIO_DECODE){
+            AssectsUtil.loadAssetsDirfile(getApplicationContext(),"video");
+            fileName = "test.mp2";
+            filePath = "/data/user/0/" + pk + "/app_video/" + fileName;
+            exampleAudioDecode(filePath);
         }
         Log.d(TAG, "filePath=" + filePath);
 
@@ -85,4 +105,9 @@ public class MainActivity extends AppCompatActivity {
     public native int exampleRemux(String filePath);
     public native int exampleAvioReading(String filePath);
     public native int exampleDecode(String filePath);
+    public native int exampleAudioEncode(String filePath);
+    public native int exampleVideoEncode(String filePath);
+
+    public native int exampleAudioDecode(String filePath);
+    public native int exampleVideoDecode(String filePath);
 }

@@ -687,3 +687,43 @@ Java_com_smartdevice_ffmpeg_MainActivity_exampleDecode(JNIEnv *env, jobject thiz
     env->ReleaseStringUTFChars(file_path, filename);
     return 0;
 }
+extern "C"
+JNIEXPORT jint JNICALL
+Java_com_smartdevice_ffmpeg_MainActivity_exampleAudioEncode(JNIEnv *env, jobject thiz,
+                                                            jstring file_path) {
+    const char *filename = env->GetStringUTFChars(file_path, 0);
+    LOGD("exampleAudioEncode filename=%s",filename);
+    example_audio_encode(filename);
+    env->ReleaseStringUTFChars(file_path, filename);
+    return 0;
+}
+extern "C"
+JNIEXPORT jint JNICALL
+Java_com_smartdevice_ffmpeg_MainActivity_exampleVideoEncode(JNIEnv *env, jobject thiz,
+                                                            jstring file_path) {
+    const char *filename = env->GetStringUTFChars(file_path, 0);
+    LOGD("exampleVideoEncode filename=%s",filename);
+    example_video_encode(filename);
+    env->ReleaseStringUTFChars(file_path, filename);
+    return 0;
+}
+extern "C"
+JNIEXPORT jint JNICALL
+Java_com_smartdevice_ffmpeg_MainActivity_exampleAudioDecode(JNIEnv *env, jobject thiz,
+                                                            jstring file_path) {
+    const char *filename = env->GetStringUTFChars(file_path, 0);
+    LOGD("example_audio_decode filename=%s",filename);
+    example_audio_decode(filename);
+    env->ReleaseStringUTFChars(file_path, filename);
+    return 0;
+}
+extern "C"
+JNIEXPORT jint JNICALL
+Java_com_smartdevice_ffmpeg_MainActivity_exampleVideoDecode(JNIEnv *env, jobject thiz,
+                                                            jstring file_path) {
+    const char *filename = env->GetStringUTFChars(file_path, 0);
+    LOGD("example_video_decode filename=%s",filename);
+    example_video_decode(filename);
+    env->ReleaseStringUTFChars(file_path, filename);
+    return 0;
+}

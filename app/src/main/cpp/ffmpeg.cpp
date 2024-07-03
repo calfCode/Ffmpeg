@@ -5,6 +5,7 @@
 #include "ffmpeg.h"
 
 
+
 #include <csignal>
 #include <csetjmp>
 
@@ -20,6 +21,7 @@ extern "C" {
 #include "libavutil/timestamp.h"
 #include "libavutil/mem.h"
 #include "libavutil/file.h"
+#include "libavutil/opt.h"
 #ifdef __cplusplus
 }
 #endif
@@ -34,6 +36,9 @@ static int tryTimes = 0;
 #define STREAM_PIX_FMT    AV_PIX_FMT_YUV420P /* default pix_fmt */
 
 #define SCALE_FLAGS SWS_BICUBIC
+
+#define AUDIO_INBUF_SIZE 20480
+#define AUDIO_REFILL_THRESH 4096
 
 int getVersion() {
     int version = avutil_version();
@@ -672,14 +677,14 @@ int example_decode (const char *filePath)
     /* open input file, and allocate format context */
     // 关联fmt_ctx到src_filename文件
     if (avformat_open_input(&fmt_ctx, src_filename, NULL, NULL) < 0) {
-        fprintf(stderr, "Could not open source file %s\n", src_filename);
+        LOGE("Could not open source file %s\n", src_filename);
         exit(1);
     }
 
     /* retrieve stream information */
     // 获取媒体 流信息
     if (avformat_find_stream_info(fmt_ctx, NULL) < 0) {
-        fprintf(stderr, "Could not find stream information\n");
+        LOGE("Could not find stream information\n");
         exit(1);
     }
 
@@ -687,7 +692,7 @@ int example_decode (const char *filePath)
         video_stream = fmt_ctx->streams[video_stream_idx];// 获取视频流
         video_dst_file = fopen(video_dst_filename, "wb");// 打开文件
         if (!video_dst_file) {
-            fprintf(stderr, "Could not open destination file %s\n", video_dst_filename);
+            LOGE("Could not open destination file %s\n", video_dst_filename);
             ret = 1;
             goto end;
         }
@@ -699,7 +704,7 @@ int example_decode (const char *filePath)
         ret = av_image_alloc(video_dst_data, video_dst_linesize,
                              width, height, pix_fmt, 1);// 分配缓存空间，用于缓存解码后视频帧
         if (ret < 0) {
-            fprintf(stderr, "Could not allocate raw video buffer\n");
+            LOGE("Could not allocate raw video buffer\n");
             goto end;
         }
         video_dst_bufsize = ret;
@@ -709,7 +714,7 @@ int example_decode (const char *filePath)
         audio_stream = fmt_ctx->streams[audio_stream_idx];// 获取音频流
         audio_dst_file = fopen(audio_dst_filename, "wb");// 打开文件
         if (!audio_dst_file) {
-            fprintf(stderr, "Could not open destination file %s\n", audio_dst_filename);
+            LOGE("Could not open destination file %s\n", audio_dst_filename);
             ret = 1;
             goto end;
         }
@@ -719,29 +724,29 @@ int example_decode (const char *filePath)
     av_dump_format(fmt_ctx, 0, src_filename, 0);
 
     if (!audio_stream && !video_stream) {
-        fprintf(stderr, "Could not find audio or video stream in the input, aborting\n");
+        LOGE("Could not find audio or video stream in the input, aborting\n");
         ret = 1;
         goto end;
     }
 
     frame = av_frame_alloc();// 分配用于存储解码后的空间
     if (!frame) {
-        fprintf(stderr, "Could not allocate frame\n");
+        LOGE("Could not allocate frame\n");
         ret = AVERROR(ENOMEM);
         goto end;
     }
 
     pkt = av_packet_alloc();// 分配用于存储 读取媒体文件的空间
     if (!pkt) {
-        fprintf(stderr, "Could not allocate packet\n");
+        LOGE("Could not allocate packet\n");
         ret = AVERROR(ENOMEM);
         goto end;
     }
 
     if (video_stream)
-        printf("Demuxing video from file '%s' into '%s'\n", src_filename, video_dst_filename);
+        LOGD("Demuxing video from file '%s' into '%s'\n", src_filename, video_dst_filename);
     if (audio_stream)
-        printf("Demuxing audio from file '%s' into '%s'\n", src_filename, audio_dst_filename);
+        LOGD("Demuxing audio from file '%s' into '%s'\n", src_filename, audio_dst_filename);
 
     /* read frames from the file */
     while (av_read_frame(fmt_ctx, pkt) >= 0) { // 从文件读取数
@@ -763,10 +768,10 @@ int example_decode (const char *filePath)
     if (audio_dec_ctx)
         decode_packet(audio_dec_ctx, NULL);
 
-    printf("Demuxing succeeded.\n");
+    LOGD("Demuxing succeeded.\n");
 
     if (video_stream) {
-        printf("Play the output video file with the command:\n"
+        LOGD("Play the output video file with the command:\n"
                "ffplay -f rawvideo -pix_fmt %s -video_size %dx%d %s\n",
                av_get_pix_fmt_name(pix_fmt), width, height,
                video_dst_filename);
@@ -779,7 +784,7 @@ int example_decode (const char *filePath)
 
         if (av_sample_fmt_is_planar(sfmt)) {
             const char *packed = av_get_sample_fmt_name(sfmt);
-            printf("Warning: the sample format the decoder produced is planar "
+            LOGD("Warning: the sample format the decoder produced is planar "
                    "(%s). This example will output the first channel only.\n",
                    packed ? packed : "?");
             sfmt = av_get_packed_sample_fmt(sfmt);
@@ -789,7 +794,7 @@ int example_decode (const char *filePath)
         if ((ret = get_format_from_sample_fmt(&fmt, sfmt)) < 0)
             goto end;
 
-        printf("Play the output audio file with the command:\n"
+        LOGD("Play the output audio file with the command:\n"
                "ffplay -f %s -ac %d -ar %d %s\n",
                fmt, n_channels, audio_dec_ctx->sample_rate,
                audio_dst_filename);
@@ -810,6 +815,714 @@ int example_decode (const char *filePath)
     return ret < 0;
 }
 
+/* check that a given sample format is supported by the encoder */
+// 检查采样格式是否在编码器支持的采样列表中
+static int check_sample_fmt(const AVCodec *codec, enum AVSampleFormat sample_fmt)
+{
+    const enum AVSampleFormat *p = codec->sample_fmts;
+
+    while (*p != AV_SAMPLE_FMT_NONE) {
+        if (*p == sample_fmt)
+            return 1;
+        p++;
+    }
+    return 0;
+}
+
+/* just pick the highest supported samplerate */
+// 选择采样率
+static int select_sample_rate(const AVCodec *codec)
+{
+    const int *p;
+    int best_samplerate = 0;
+
+    if (!codec->supported_samplerates)
+        return 44100;
+
+    p = codec->supported_samplerates;
+    while (*p) {
+        if (!best_samplerate || abs(44100 - *p) < abs(44100 - best_samplerate))
+            best_samplerate = *p;
+        p++;
+    }
+    return best_samplerate;
+}
+
+/* select layout with the highest channel count */
+// 选择声音布局
+static int select_channel_layout(const AVCodec *codec, AVChannelLayout *dst)
+{
+    const AVChannelLayout *p, *best_ch_layout;
+    int best_nb_channels   = 0;
+
+    if (!codec->ch_layouts){
+         AVChannelLayout src = AV_CHANNEL_LAYOUT_STEREO;
+        return av_channel_layout_copy(dst,&src);
+    }
+
+
+    p = codec->ch_layouts;
+    while (p->nb_channels) {
+        int nb_channels = p->nb_channels;
+
+        if (nb_channels > best_nb_channels) {
+            best_ch_layout   = p;
+            best_nb_channels = nb_channels;
+        }
+        p++;
+    }
+    return av_channel_layout_copy(dst, best_ch_layout);
+}
+
+static void encode_audio(AVCodecContext *ctx, AVFrame *frame, AVPacket *pkt,
+                         FILE *output)
+{
+    int ret;
+
+    /* send the frame for encoding */
+    ret = avcodec_send_frame(ctx, frame);// 发送frame给编码器
+    if (ret < 0) {
+        LOGE("Error sending the frame to the encoder\n");
+        exit(1);
+    }
+
+    /* read all the available output packets (in general there may be any
+     * number of them */
+    while (ret >= 0) {
+        ret = avcodec_receive_packet(ctx, pkt);// 从编码器接收编码后的数据
+        if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF)
+            return;
+        else if (ret < 0) {
+            LOGE("Error encoding audio frame\n");
+            exit(1);
+        }
+
+        fwrite(pkt->data, 1, pkt->size, output);// 写入到文件中
+        av_packet_unref(pkt);
+    }
+}
+
+int example_audio_encode(const char *filePath)
+{
+    const char *filename;
+    const AVCodec *codec;
+    AVCodecContext *c= NULL;
+    AVFrame *frame;
+    AVPacket *pkt;
+    int i, j, k, ret;
+    FILE *f;
+    uint16_t *samples;
+    float t, tincr;
+   
+    filename = filePath;
+    /* find the MP2 encoder */
+    codec = avcodec_find_encoder(AV_CODEC_ID_MP2);// 查找编码器
+    if (!codec) {
+        LOGE("Codec not found\n");
+        exit(1);
+    }
+
+    c = avcodec_alloc_context3(codec); // 分配codec context
+    if (!c) {
+        LOGE("Could not allocate audio codec context\n");
+        exit(1);
+    }
+
+    /* put sample parameters */
+    // 设置编码参数
+    c->bit_rate = 64000;
+
+    /* check that the encoder supports s16 pcm input */
+    c->sample_fmt = AV_SAMPLE_FMT_S16;
+    if (!check_sample_fmt(codec, c->sample_fmt)) {
+        LOGE("Encoder does not support sample format %s",
+                av_get_sample_fmt_name(c->sample_fmt));
+        exit(1);
+    }
+
+    /* select other audio parameters supported by the encoder */
+    c->sample_rate    = select_sample_rate(codec);
+    ret = select_channel_layout(codec, &c->ch_layout);
+    if (ret < 0)
+        exit(1);
+
+    /* open it */
+    // 打开编码器
+    if (avcodec_open2(c, codec, NULL) < 0) {
+        LOGE("Could not open codec\n");
+        exit(1);
+    }
+
+    // 打开文件
+    f = fopen(filename, "wb");
+    if (!f) {
+        LOGE("Could not open %s\n", filename);
+        exit(1);
+    }
+
+    /* packet for holding encoded output */
+    pkt = av_packet_alloc();
+    if (!pkt) {
+        LOGE("could not allocate the packet\n");
+        exit(1);
+    }
+
+    /* frame containing input raw audio */
+    // 设置frame 参数
+    frame = av_frame_alloc();
+    if (!frame) {
+        LOGE("Could not allocate audio frame\n");
+        exit(1);
+    }
+    frame->nb_samples     = c->frame_size;
+    frame->format         = c->sample_fmt;
+    ret = av_channel_layout_copy(&frame->ch_layout, &c->ch_layout);// 从编码器上下文拷贝通道布局
+    if (ret < 0)
+        exit(1);
+
+    /* allocate the data buffers */
+    // 分配内存
+    ret = av_frame_get_buffer(frame, 0);
+    if (ret < 0) {
+        LOGE("Could not allocate audio data buffers\n");
+        exit(1);
+    }
+
+    /* encode a single tone sound */
+    t = 0;
+    tincr = 2 * M_PI * 440.0 / c->sample_rate;
+    for (i = 0; i < 200; i++) {
+        /* make sure the frame is writable -- makes a copy if the encoder
+         * kept a reference internally */
+        ret = av_frame_make_writable(frame); // 设置frame 为可写入的
+        if (ret < 0)
+            exit(1);
+        samples = (uint16_t*)frame->data[0];// samples 指向frame data区
+
+        for (j = 0; j < c->frame_size; j++) {
+            samples[2*j] = (int)(sin(t) * 10000);
+
+            for (k = 1; k < c->ch_layout.nb_channels; k++)
+                samples[2*j + k] = samples[2*j];
+            t += tincr;
+        }
+        encode_audio(c, frame, pkt, f);// 编码
+    }
+
+    /* flush the encoder */
+    encode_audio(c, NULL, pkt, f);
+
+    fclose(f);
+
+    av_frame_free(&frame);
+    av_packet_free(&pkt);
+    avcodec_free_context(&c);
+
+    return 0;
+}
+
+
+static void encode_video(AVCodecContext *enc_ctx, AVFrame *frame, AVPacket *pkt,
+                   FILE *outfile)
+{
+    int ret;
+
+    /* send the frame to the encoder */
+    if (frame)
+        LOGD("Send frame %3" PRId64"\n", frame->pts);
+
+    ret = avcodec_send_frame(enc_ctx, frame);// 发送数据给编码器
+    if (ret < 0) {
+        LOGE("Error sending a frame for encoding\n");
+        exit(1);
+    }
+
+    while (ret >= 0) {
+        ret = avcodec_receive_packet(enc_ctx, pkt);// 获取编码后的数据
+        if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF)
+            return;
+        else if (ret < 0) {
+            LOGE("Error during encoding\n");
+            exit(1);
+        }
+
+        LOGD("Write packet %3" PRId64" (size=%5d)\n", pkt->pts, pkt->size);
+        fwrite(pkt->data, 1, pkt->size, outfile);// 写入数据到文件
+        av_packet_unref(pkt);
+    }
+}
+
+int example_video_encode(const char *filePath)
+{
+    const char *filename, *codec_name;
+    const AVCodec *codec;
+    AVCodecContext *c= NULL;
+    int i, ret, x, y;
+    FILE *f;
+    AVFrame *frame;
+    AVPacket *pkt;
+    uint8_t endcode[] = { 0, 0, 1, 0xb7 };
+
+
+    filename = filePath;
+    codec_name = "mpeg1video";
+
+    /* find the mpeg1video encoder */
+    codec = avcodec_find_encoder_by_name(codec_name);//根据名字查找编码器
+    if (!codec) {
+        LOGE("Codec '%s' not found\n", codec_name);
+        exit(1);
+    }
+
+    c = avcodec_alloc_context3(codec);// 分配codec上下文
+    if (!c) {
+        LOGE("Could not allocate video codec context\n");
+        exit(1);
+    }
+
+    pkt = av_packet_alloc(); // 分配packet
+    if (!pkt)
+        exit(1);
+
+    /* put sample parameters */
+    // 设置编码器参数
+    c->bit_rate = 400000;// 比特率
+    /* resolution must be a multiple of two */
+    c->width = 352; //宽
+    c->height = 288;// 高
+    /* frames per second */
+
+    c->time_base = (AVRational){1, 25};
+    c->framerate = (AVRational){25, 1};//帧率
+
+    /* emit one intra frame every ten frames
+     * check frame pict_type before passing frame
+     * to encoder, if frame->pict_type is AV_PICTURE_TYPE_I
+     * then gop_size is ignored and the output of encoder
+     * will always be I frame irrespective to gop_size
+     */
+    c->gop_size = 10;// 10帧一个GOP
+    c->max_b_frames = 1;// 最大可以包含一个B帧
+    c->pix_fmt = AV_PIX_FMT_YUV420P;// 格式为YUV420P
+
+    if (codec->id == AV_CODEC_ID_H264){
+        av_opt_set(c->priv_data, "preset", "slow", 0);
+    }
+      
+
+    /* open it */
+    // 打开编码器
+    ret = avcodec_open2(c, codec, NULL);
+    if (ret < 0) {
+        LOGE("Could not open codec: %s\n", av_err2str(ret));
+        exit(1);
+    }
+
+    f = fopen(filename, "wb");
+    if (!f) {
+        LOGE("Could not open %s\n", filename);
+        exit(1);
+    }
+
+    frame = av_frame_alloc();
+    if (!frame) {
+        LOGE("Could not allocate video frame\n");
+        exit(1);
+    }
+    frame->format = c->pix_fmt;
+    frame->width  = c->width;
+    frame->height = c->height;
+    // 分配frame 的数据空间
+    ret = av_frame_get_buffer(frame, 0);
+    if (ret < 0) {
+        LOGE("Could not allocate the video frame data\n");
+        exit(1);
+    }
+
+    /* encode 1 second of video */
+    for (i = 0; i < 25; i++) {
+        fflush(stdout);
+
+        /* Make sure the frame data is writable.
+           On the first round, the frame is fresh from av_frame_get_buffer()
+           and therefore we know it is writable.
+           But on the next rounds, encode() will have called
+           avcodec_send_frame(), and the codec may have kept a reference to
+           the frame in its internal structures, that makes the frame
+           unwritable.
+           av_frame_make_writable() checks that and allocates a new buffer
+           for the frame only if necessary.
+         */
+        ret = av_frame_make_writable(frame);
+        if (ret < 0)
+            exit(1);
+
+        /* Prepare a dummy image.
+           In real code, this is where you would have your own logic for
+           filling the frame. FFmpeg does not care what you put in the
+           frame.
+         */
+        /* Y */
+        for (y = 0; y < c->height; y++) {
+            for (x = 0; x < c->width; x++) {
+                frame->data[0][y * frame->linesize[0] + x] = x + y + i * 3;
+            }
+        }
+
+        /* Cb and Cr */
+        for (y = 0; y < c->height/2; y++) {
+            for (x = 0; x < c->width/2; x++) {
+                frame->data[1][y * frame->linesize[1] + x] = 128 + y + i * 2;
+                frame->data[2][y * frame->linesize[2] + x] = 64 + x + i * 5;
+            }
+        }
+
+        frame->pts = i;
+
+        /* encode the image */
+        // 编码视频
+        encode_video(c, frame, pkt, f);
+    }
+
+    /* flush the encoder */
+     // 刷新编码器
+    encode_video(c, NULL, pkt, f);
+
+    /* Add sequence end code to have a real MPEG file.
+       It makes only sense because this tiny examples writes packets
+       directly. This is called "elementary stream" and only works for some
+       codecs. To create a valid file, you usually need to write packets
+       into a proper file format or protocol; see mux.c.
+     */
+    //  写入特定的数据结尾
+    if (codec->id == AV_CODEC_ID_MPEG1VIDEO || codec->id == AV_CODEC_ID_MPEG2VIDEO)
+        fwrite(endcode, 1, sizeof(endcode), f);
+    fclose(f);
+
+    avcodec_free_context(&c);
+    av_frame_free(&frame);
+    av_packet_free(&pkt);
+
+    return 0;
+}
+
+
+
+#define INBUF_SIZE 4096
+
+static void pgm_save(unsigned char *buf, int wrap, int xsize, int ysize,
+                     char *filename)
+{
+    FILE *f;
+    int i;
+
+    f = fopen(filename,"wb");
+    fprintf(f, "P5\n%d %d\n%d\n", xsize, ysize, 255);
+    for (i = 0; i < ysize; i++)
+        fwrite(buf + i * wrap, 1, xsize, f);
+    fclose(f);
+}
+
+static void decode_video(AVCodecContext *dec_ctx, AVFrame *frame, AVPacket *pkt,
+                   const char *filename)
+{
+    char buf[1024];
+    int ret;
+
+    ret = avcodec_send_packet(dec_ctx, pkt);// 发送数据到解码器
+    if (ret < 0) {
+        LOGE("Error sending a packet for decoding\n");
+        exit(1);
+    }
+
+    while (ret >= 0) {
+        ret = avcodec_receive_frame(dec_ctx, frame); // 接收解码器的输出数据
+        if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF)
+            return;
+        else if (ret < 0) {
+            LOGE("Error during decoding\n");
+            exit(1);
+        }
+
+        LOGD("saving frame %3" PRId64"\n", dec_ctx->frame_num);
+        fflush(stdout);
+
+        /* the picture is allocated by the decoder. no need to
+           free it */
+        snprintf(buf, sizeof(buf), "%s-%" PRId64, filename, dec_ctx->frame_num);
+        pgm_save(frame->data[0], frame->linesize[0],
+                 frame->width, frame->height, buf);// 保存文件
+    }
+}
+
+int example_video_decode(const char *filePath)
+{
+    const char *filename, *outfilename;
+    const AVCodec *codec;
+    AVCodecParserContext *parser;
+    AVCodecContext *c= NULL;
+    FILE *f;
+    AVFrame *frame;
+    uint8_t inbuf[INBUF_SIZE + AV_INPUT_BUFFER_PADDING_SIZE];
+    uint8_t *data;
+    size_t   data_size;
+    int ret;
+    int eof;
+    AVPacket *pkt;
+
+    filename    = filePath;
+    outfilename = "/data/user/0/com.smartdevice.ffmpeg/app_video/decode.v";
+
+    pkt = av_packet_alloc();
+    if (!pkt)
+        exit(1);
+
+    /* set end of buffer to 0 (this ensures that no overreading happens for damaged MPEG streams) */
+    memset(inbuf + INBUF_SIZE, 0, AV_INPUT_BUFFER_PADDING_SIZE);
+
+    /* find the MPEG-1 video decoder */
+    codec = avcodec_find_decoder(AV_CODEC_ID_MPEG1VIDEO); // 查找解码器
+    if (!codec) {
+        LOGE("Codec not found\n");
+        exit(1);
+    }
+
+    parser = av_parser_init(codec->id);// 根据codec id初始化AVCodecParserContext
+    if (!parser) {
+        LOGE("parser not found\n");
+        exit(1);
+    }
+
+    c = avcodec_alloc_context3(codec);// 分配AVCodecContext
+    if (!c) {
+        LOGE("Could not allocate video codec context\n");
+        exit(1);
+    }
+
+    /* For some codecs, such as msmpeg4 and mpeg4, width and height
+       MUST be initialized there because this information is not
+       available in the bitstream. */
+
+    /* open it */
+    if (avcodec_open2(c, codec, NULL) < 0) { // 打开解码器
+        LOGE("Could not open codec\n");
+        exit(1);
+    }
+
+    f = fopen(filename, "rb");
+    if (!f) {
+        LOGE("Could not open %s\n", filename);
+        exit(1);
+    }
+
+    frame = av_frame_alloc();
+    if (!frame) {
+        LOGE("Could not allocate video frame\n");
+        exit(1);
+    }
+
+    do {
+        /* read raw data from the input file */
+        data_size = fread(inbuf, 1, INBUF_SIZE, f);// 读取INBUF_SIZE个字节
+        if (ferror(f))
+            break;
+        eof = !data_size;
+
+        /* use the parser to split the data into frames */
+        data = inbuf;
+        while (data_size > 0 || eof) {
+            ret = av_parser_parse2(parser, c, &pkt->data, &pkt->size,
+                                   data, data_size, AV_NOPTS_VALUE, AV_NOPTS_VALUE, 0);
+            if (ret < 0) {
+                LOGE("Error while parsing\n");
+                exit(1);
+            }
+            data      += ret;
+            data_size -= ret;
+
+            if (pkt->size)
+                decode_video(c, frame, pkt, outfilename);
+            else if (eof)
+                break;
+        }
+    } while (!eof);
+
+    /* flush the decoder */
+    decode_video(c, frame, NULL, outfilename);
+
+    fclose(f);
+
+    av_parser_close(parser);
+    avcodec_free_context(&c);
+    av_frame_free(&frame);
+    av_packet_free(&pkt);
+
+    return 0;
+}
+
+
+static void decode_audio(AVCodecContext *dec_ctx, AVPacket *pkt, AVFrame *frame,
+                   FILE *outfile)
+{
+    int i, ch;
+    int ret, data_size;
+
+    /* send the packet with the compressed data to the decoder */
+    ret = avcodec_send_packet(dec_ctx, pkt);
+    if (ret < 0) {
+        LOGE("Error submitting the packet to the decoder\n");
+        exit(1);
+    }
+
+    /* read all the output frames (in general there may be any number of them */
+    while (ret >= 0) {
+        ret = avcodec_receive_frame(dec_ctx, frame);
+        if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF)
+            return;
+        else if (ret < 0) {
+            LOGE("Error during decoding\n");
+            exit(1);
+        }
+        data_size = av_get_bytes_per_sample(dec_ctx->sample_fmt);
+        if (data_size < 0) {
+            /* This should not occur, checking just for paranoia */
+            LOGE("Failed to calculate data size\n");
+            exit(1);
+        }
+        for (i = 0; i < frame->nb_samples; i++)
+            for (ch = 0; ch < dec_ctx->ch_layout.nb_channels; ch++)
+                fwrite(frame->data[ch] + data_size*i, 1, data_size, outfile);
+    }
+}
+
+int example_audio_decode(const char *filePath)
+{
+    const char *outfilename, *filename;
+    const AVCodec *codec;
+    AVCodecContext *c= NULL;
+    AVCodecParserContext *parser = NULL;
+    int len, ret;
+    FILE *f, *outfile;
+    uint8_t inbuf[AUDIO_INBUF_SIZE + AV_INPUT_BUFFER_PADDING_SIZE];
+    uint8_t *data;
+    size_t   data_size;
+    AVPacket *pkt;
+    AVFrame *decoded_frame = NULL;
+    enum AVSampleFormat sfmt;
+    int n_channels = 0;
+    const char *fmt;
+    
+    filename    = filePath;
+    outfilename = "/data/user/0/com.smartdevice.ffmpeg/app_video/decode.a";
+    pkt = av_packet_alloc();
+
+    /* find the MPEG audio decoder */
+    codec = avcodec_find_decoder(AV_CODEC_ID_MP2);// 查找解码器
+    if (!codec) {
+        LOGE("Codec not found\n");
+        exit(1);
+    }
+
+    parser = av_parser_init(codec->id);
+    if (!parser) {
+        LOGE("Parser not found\n");
+        exit(1);
+    }
+
+    c = avcodec_alloc_context3(codec);
+    if (!c) {
+        LOGE("Could not allocate audio codec context\n");
+        exit(1);
+    }
+
+    /* open it */
+     // 打开解码器
+    if (avcodec_open2(c, codec, NULL) < 0) {
+        LOGE("Could not open codec\n");
+        exit(1);
+    }
+
+    f = fopen(filename, "rb");
+    if (!f) {
+        LOGE("Could not open %s\n", filename);
+        exit(1);
+    }
+    outfile = fopen(outfilename, "wb");
+    if (!outfile) {
+        av_free(c);
+        exit(1);
+    }
+
+    /* decode until eof */
+    data      = inbuf;
+    data_size = fread(inbuf, 1, AUDIO_INBUF_SIZE, f);
+
+    while (data_size > 0) {
+        if (!decoded_frame) {
+            if (!(decoded_frame = av_frame_alloc())) {
+                LOGE("Could not allocate audio frame\n");
+                exit(1);
+            }
+        }
+
+        ret = av_parser_parse2(parser, c, &pkt->data, &pkt->size,
+                               data, data_size,
+                               AV_NOPTS_VALUE, AV_NOPTS_VALUE, 0);
+        if (ret < 0) {
+            LOGE("Error while parsing\n");
+            exit(1);
+        }
+        data      += ret;
+        data_size -= ret;
+
+        if (pkt->size)
+            decode_audio(c, pkt, decoded_frame, outfile);
+
+        if (data_size < AUDIO_REFILL_THRESH) {
+            memmove(inbuf, data, data_size);
+            data = inbuf;
+            len = fread(data + data_size, 1,
+                        AUDIO_INBUF_SIZE - data_size, f);
+            if (len > 0)
+                data_size += len;
+        }
+    }
+
+    /* flush the decoder */
+    pkt->data = NULL;
+    pkt->size = 0;
+    decode_audio(c, pkt, decoded_frame, outfile);
+
+    /* print output pcm infomations, because there have no metadata of pcm */
+    sfmt = c->sample_fmt;
+
+    if (av_sample_fmt_is_planar(sfmt)) {
+        const char *packed = av_get_sample_fmt_name(sfmt);
+        LOGD("Warning: the sample format the decoder produced is planar "
+               "(%s). This example will output the first channel only.\n",
+               packed ? packed : "?");
+        sfmt = av_get_packed_sample_fmt(sfmt);
+    }
+
+    n_channels = c->ch_layout.nb_channels;
+    if ((ret = get_format_from_sample_fmt(&fmt, sfmt)) < 0)
+        goto end;
+
+    LOGD("Play the output audio file with the command:\n"
+           "ffplay -f %s -ac %d -ar %d %s\n",
+           fmt, n_channels, c->sample_rate,
+           outfilename);
+    end:
+    fclose(outfile);
+    fclose(f);
+
+    avcodec_free_context(&c);
+    av_parser_close(parser);
+    av_frame_free(&decoded_frame);
+    av_packet_free(&pkt);
+
+    return 0;
+}
 
 
 

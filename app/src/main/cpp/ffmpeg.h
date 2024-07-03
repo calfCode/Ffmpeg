@@ -20,4 +20,8 @@ int example_demux (const char *filePath);
 int example_remux (const char *filePath);
 int example_avio_reading (const char *filePath);
 int example_decode(const char *filePath);
+int example_audio_encode(const char *filePath);
+int example_video_encode(const char *filePath);
+int example_audio_decode(const char *filePath);
+int example_video_decode(const char *filePath);
 #endif //SKYAPP_FFMPEG_H
