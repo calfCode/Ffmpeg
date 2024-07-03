@@ -1331,6 +1331,7 @@ int example_video_decode(const char *filePath)
         /* use the parser to split the data into frames */
         data = inbuf;
         while (data_size > 0 || eof) {
+            // 用来在解码的时候解析和读取完整的压缩帧数据，它会使用内部缓存收集数据包，知道它找到足够的数据组成一个完整的帧，然后这个帧被发送到解码器进行解码
             ret = av_parser_parse2(parser, c, &pkt->data, &pkt->size,
                                    data, data_size, AV_NOPTS_VALUE, AV_NOPTS_VALUE, 0);
             if (ret < 0) {
@@ -1464,7 +1465,7 @@ int example_audio_decode(const char *filePath)
                 exit(1);
             }
         }
-
+// 将音频数据解析出来
         ret = av_parser_parse2(parser, c, &pkt->data, &pkt->size,
                                data, data_size,
                                AV_NOPTS_VALUE, AV_NOPTS_VALUE, 0);
