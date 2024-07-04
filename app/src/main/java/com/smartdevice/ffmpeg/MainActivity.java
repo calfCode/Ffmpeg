@@ -22,7 +22,7 @@ public class MainActivity extends AppCompatActivity {
 
     private ActivityMainBinding binding;
 
-    private TestType testType = TestType.AUDIO_DECODE;
+    private TestType testType = TestType.AUDIO_DECODE_FILTER;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -89,6 +89,23 @@ public class MainActivity extends AppCompatActivity {
             fileName = "test.mp2";
             filePath = "/data/user/0/" + pk + "/app_video/" + fileName;
             exampleAudioDecode(filePath);
+        }else if(testType == TestType.VIDEO_DECODE_FILTER){
+            AssectsUtil.loadAssetsDirfile(getApplicationContext(),"video");
+            fileName = "test.v";
+            filePath = "/data/user/0/" + pk + "/app_video/" + fileName;
+            final String videoPath = filePath;
+            new Thread(new Runnable() {
+                @Override
+                public void run() {
+                    exampleVideoDecodeFilter(videoPath);
+                }
+            }).start();
+
+        }else if(testType == TestType.AUDIO_DECODE_FILTER){
+            AssectsUtil.loadAssetsDirfile(getApplicationContext(),"video");
+            fileName = "test.mp2";
+            filePath = "/data/user/0/" + pk + "/app_video/" + fileName;
+            exampleAudioDecodeFilter(filePath);
         }
         Log.d(TAG, "filePath=" + filePath);
 
@@ -110,4 +127,7 @@ public class MainActivity extends AppCompatActivity {
 
     public native int exampleAudioDecode(String filePath);
     public native int exampleVideoDecode(String filePath);
+
+    public native int exampleAudioDecodeFilter(String filePath);
+    public native int exampleVideoDecodeFilter(String filePath);
 }

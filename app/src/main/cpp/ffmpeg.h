@@ -24,4 +24,6 @@ int example_audio_encode(const char *filePath);
 int example_video_encode(const char *filePath);
 int example_audio_decode(const char *filePath);
 int example_video_decode(const char *filePath);
+int example_video_decode_filter(const char *filePath);
+int example_audio_decode_filter(const char *filePath);
 #endif //SKYAPP_FFMPEG_H

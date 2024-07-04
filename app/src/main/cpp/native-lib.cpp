@@ -727,3 +727,23 @@ Java_com_smartdevice_ffmpeg_MainActivity_exampleVideoDecode(JNIEnv *env, jobject
     env->ReleaseStringUTFChars(file_path, filename);
     return 0;
 }
+extern "C"
+JNIEXPORT jint JNICALL
+Java_com_smartdevice_ffmpeg_MainActivity_exampleAudioDecodeFilter(JNIEnv *env, jobject thiz,
+                                                                  jstring file_path) {
+    const char *filename = env->GetStringUTFChars(file_path, 0);
+    LOGD("exampleAudioDecodeFilter filename=%s",filename);
+    example_audio_decode_filter(filename);
+    env->ReleaseStringUTFChars(file_path, filename);
+    return 0;
+}
+extern "C"
+JNIEXPORT jint JNICALL
+Java_com_smartdevice_ffmpeg_MainActivity_exampleVideoDecodeFilter(JNIEnv *env, jobject thiz,
+                                                                  jstring file_path) {
+    const char *filename = env->GetStringUTFChars(file_path, 0);
+    LOGD("exampleVideoDecodeFilter filename=%s",filename);
+    example_video_decode_filter(filename);
+    env->ReleaseStringUTFChars(file_path, filename);
+    return 0;
+}

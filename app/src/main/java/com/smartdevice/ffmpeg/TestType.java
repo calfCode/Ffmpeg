@@ -11,4 +11,6 @@ public enum TestType {
 
     AUDIO_DECODE,
     VIDEO_DECODE,
+    AUDIO_DECODE_FILTER,
+    VIDEO_DECODE_FILTER,
 }

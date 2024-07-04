@@ -4,8 +4,6 @@
 
 #include "ffmpeg.h"
 
-
-
 #include <csignal>
 #include <csetjmp>
 
@@ -22,11 +20,15 @@ extern "C" {
 #include "libavutil/mem.h"
 #include "libavutil/file.h"
 #include "libavutil/opt.h"
+#include "libavfilter/avfilter.h"
+#include "libavfilter/buffersrc.h"
+#include "libavfilter/buffersink.h"
 #ifdef __cplusplus
 }
 #endif
 
 #include <thread>
+#include <unistd.h>
 
 //#define LOGD(...) __android_log_print(ANDROID_LOG_DEBUG , TAG, __VA_ARGS__)
 static AVFormatContext *pFormatCtx = NULL;
@@ -65,6 +67,18 @@ static AVFrame *frame = NULL;
 static AVPacket *pkt = NULL;
 static int video_frame_count = 0;
 static int audio_frame_count = 0;
+
+static AVCodecContext *dec_ctx;
+AVFilterContext *buffersink_ctx;
+AVFilterContext *buffersrc_ctx;
+AVFilterGraph *filter_graph;
+static int video_stream_index = -1;
+static int audio_stream_index = -1;
+static int64_t last_pts = AV_NOPTS_VALUE;
+
+const char *video_filter_descr = "scale=78:24,transpose=cclock";
+const char *audio_filter_descr = "aresample=8000,aformat=sample_fmts=s16:channel_layouts=mono";
+static const char *player       = "ffplay -f s16le -ar 8000 -ac 1 -";
 
 static int output_video_frame(AVFrame *frame) {
     if (frame->width != width || frame->height != height ||
@@ -249,14 +263,14 @@ int example_demux(const char *filePath) {
     // 打开文件，分配format上下文
     if (avformat_open_input(&fmt_ctx, src_filename, NULL, NULL) < 0) {
         LOGE("Could not open source file %s\n", src_filename);
-        exit(1);
+        return 1;
     }
 
     /* retrieve stream information */
     // 获取文件的流信息
     if (avformat_find_stream_info(fmt_ctx, NULL) < 0) {
         LOGE("Could not find stream information\n");
-        exit(1);
+        return 1;
     }
     // 获取视频流 codec上下文
     if (open_codec_context(&video_stream_idx, &video_dec_ctx, fmt_ctx, AVMEDIA_TYPE_VIDEO) >= 0) {
@@ -678,14 +692,14 @@ int example_decode (const char *filePath)
     // 关联fmt_ctx到src_filename文件
     if (avformat_open_input(&fmt_ctx, src_filename, NULL, NULL) < 0) {
         LOGE("Could not open source file %s\n", src_filename);
-        exit(1);
+        return 1;
     }
 
     /* retrieve stream information */
     // 获取媒体 流信息
     if (avformat_find_stream_info(fmt_ctx, NULL) < 0) {
         LOGE("Could not find stream information\n");
-        exit(1);
+        return 1;
     }
 
     if (open_codec_context(&video_stream_idx, &video_dec_ctx, fmt_ctx, AVMEDIA_TYPE_VIDEO) >= 0) {
@@ -883,7 +897,7 @@ static void encode_audio(AVCodecContext *ctx, AVFrame *frame, AVPacket *pkt,
     ret = avcodec_send_frame(ctx, frame);// 发送frame给编码器
     if (ret < 0) {
         LOGE("Error sending the frame to the encoder\n");
-        exit(1);
+        return ;
     }
 
     /* read all the available output packets (in general there may be any
@@ -894,7 +908,7 @@ static void encode_audio(AVCodecContext *ctx, AVFrame *frame, AVPacket *pkt,
             return;
         else if (ret < 0) {
             LOGE("Error encoding audio frame\n");
-            exit(1);
+            return ;
         }
 
         fwrite(pkt->data, 1, pkt->size, output);// 写入到文件中
@@ -919,13 +933,13 @@ int example_audio_encode(const char *filePath)
     codec = avcodec_find_encoder(AV_CODEC_ID_MP2);// 查找编码器
     if (!codec) {
         LOGE("Codec not found\n");
-        exit(1);
+        return 1;
     }
 
     c = avcodec_alloc_context3(codec); // 分配codec context
     if (!c) {
         LOGE("Could not allocate audio codec context\n");
-        exit(1);
+        return 1;
     }
 
     /* put sample parameters */
@@ -937,34 +951,34 @@ int example_audio_encode(const char *filePath)
     if (!check_sample_fmt(codec, c->sample_fmt)) {
         LOGE("Encoder does not support sample format %s",
                 av_get_sample_fmt_name(c->sample_fmt));
-        exit(1);
+        return 1;
     }
 
     /* select other audio parameters supported by the encoder */
     c->sample_rate    = select_sample_rate(codec);
     ret = select_channel_layout(codec, &c->ch_layout);
     if (ret < 0)
-        exit(1);
+        return 1;
 
     /* open it */
     // 打开编码器
     if (avcodec_open2(c, codec, NULL) < 0) {
         LOGE("Could not open codec\n");
-        exit(1);
+        return 1;
     }
 
     // 打开文件
     f = fopen(filename, "wb");
     if (!f) {
         LOGE("Could not open %s\n", filename);
-        exit(1);
+        return 1;
     }
 
     /* packet for holding encoded output */
     pkt = av_packet_alloc();
     if (!pkt) {
         LOGE("could not allocate the packet\n");
-        exit(1);
+        return 1;
     }
 
     /* frame containing input raw audio */
@@ -972,20 +986,20 @@ int example_audio_encode(const char *filePath)
     frame = av_frame_alloc();
     if (!frame) {
         LOGE("Could not allocate audio frame\n");
-        exit(1);
+        return 1;
     }
     frame->nb_samples     = c->frame_size;
     frame->format         = c->sample_fmt;
     ret = av_channel_layout_copy(&frame->ch_layout, &c->ch_layout);// 从编码器上下文拷贝通道布局
     if (ret < 0)
-        exit(1);
+        return 1;
 
     /* allocate the data buffers */
     // 分配内存
     ret = av_frame_get_buffer(frame, 0);
     if (ret < 0) {
         LOGE("Could not allocate audio data buffers\n");
-        exit(1);
+        return 1;
     }
 
     /* encode a single tone sound */
@@ -996,7 +1010,7 @@ int example_audio_encode(const char *filePath)
          * kept a reference internally */
         ret = av_frame_make_writable(frame); // 设置frame 为可写入的
         if (ret < 0)
-            exit(1);
+            return 1;
         samples = (uint16_t*)frame->data[0];// samples 指向frame data区
 
         for (j = 0; j < c->frame_size; j++) {
@@ -1034,7 +1048,7 @@ static void encode_video(AVCodecContext *enc_ctx, AVFrame *frame, AVPacket *pkt,
     ret = avcodec_send_frame(enc_ctx, frame);// 发送数据给编码器
     if (ret < 0) {
         LOGE("Error sending a frame for encoding\n");
-        exit(1);
+        return ;
     }
 
     while (ret >= 0) {
@@ -1043,7 +1057,7 @@ static void encode_video(AVCodecContext *enc_ctx, AVFrame *frame, AVPacket *pkt,
             return;
         else if (ret < 0) {
             LOGE("Error during encoding\n");
-            exit(1);
+            return ;
         }
 
         LOGD("Write packet %3" PRId64" (size=%5d)\n", pkt->pts, pkt->size);
@@ -1071,18 +1085,18 @@ int example_video_encode(const char *filePath)
     codec = avcodec_find_encoder_by_name(codec_name);//根据名字查找编码器
     if (!codec) {
         LOGE("Codec '%s' not found\n", codec_name);
-        exit(1);
+        return 1;
     }
 
     c = avcodec_alloc_context3(codec);// 分配codec上下文
     if (!c) {
         LOGE("Could not allocate video codec context\n");
-        exit(1);
+        return 1;
     }
 
     pkt = av_packet_alloc(); // 分配packet
     if (!pkt)
-        exit(1);
+        return 1;
 
     /* put sample parameters */
     // 设置编码器参数
@@ -1115,19 +1129,19 @@ int example_video_encode(const char *filePath)
     ret = avcodec_open2(c, codec, NULL);
     if (ret < 0) {
         LOGE("Could not open codec: %s\n", av_err2str(ret));
-        exit(1);
+        return 1;
     }
 
     f = fopen(filename, "wb");
     if (!f) {
         LOGE("Could not open %s\n", filename);
-        exit(1);
+        return 1;
     }
 
     frame = av_frame_alloc();
     if (!frame) {
         LOGE("Could not allocate video frame\n");
-        exit(1);
+        return 1;
     }
     frame->format = c->pix_fmt;
     frame->width  = c->width;
@@ -1136,7 +1150,7 @@ int example_video_encode(const char *filePath)
     ret = av_frame_get_buffer(frame, 0);
     if (ret < 0) {
         LOGE("Could not allocate the video frame data\n");
-        exit(1);
+        return 1;
     }
 
     /* encode 1 second of video */
@@ -1155,7 +1169,7 @@ int example_video_encode(const char *filePath)
          */
         ret = av_frame_make_writable(frame);
         if (ret < 0)
-            exit(1);
+            return 1;
 
         /* Prepare a dummy image.
            In real code, this is where you would have your own logic for
@@ -1232,7 +1246,7 @@ static void decode_video(AVCodecContext *dec_ctx, AVFrame *frame, AVPacket *pkt,
     ret = avcodec_send_packet(dec_ctx, pkt);// 发送数据到解码器
     if (ret < 0) {
         LOGE("Error sending a packet for decoding\n");
-        exit(1);
+        return ;
     }
 
     while (ret >= 0) {
@@ -1241,7 +1255,7 @@ static void decode_video(AVCodecContext *dec_ctx, AVFrame *frame, AVPacket *pkt,
             return;
         else if (ret < 0) {
             LOGE("Error during decoding\n");
-            exit(1);
+            return ;
         }
 
         LOGD("saving frame %3" PRId64"\n", dec_ctx->frame_num);
@@ -1275,7 +1289,7 @@ int example_video_decode(const char *filePath)
 
     pkt = av_packet_alloc();
     if (!pkt)
-        exit(1);
+        return 1;
 
     /* set end of buffer to 0 (this ensures that no overreading happens for damaged MPEG streams) */
     memset(inbuf + INBUF_SIZE, 0, AV_INPUT_BUFFER_PADDING_SIZE);
@@ -1284,19 +1298,19 @@ int example_video_decode(const char *filePath)
     codec = avcodec_find_decoder(AV_CODEC_ID_MPEG1VIDEO); // 查找解码器
     if (!codec) {
         LOGE("Codec not found\n");
-        exit(1);
+        return 1;
     }
 
     parser = av_parser_init(codec->id);// 根据codec id初始化AVCodecParserContext
     if (!parser) {
         LOGE("parser not found\n");
-        exit(1);
+        return 1;
     }
 
     c = avcodec_alloc_context3(codec);// 分配AVCodecContext
     if (!c) {
         LOGE("Could not allocate video codec context\n");
-        exit(1);
+        return 1;
     }
 
     /* For some codecs, such as msmpeg4 and mpeg4, width and height
@@ -1306,19 +1320,19 @@ int example_video_decode(const char *filePath)
     /* open it */
     if (avcodec_open2(c, codec, NULL) < 0) { // 打开解码器
         LOGE("Could not open codec\n");
-        exit(1);
+        return 1;
     }
 
     f = fopen(filename, "rb");
     if (!f) {
         LOGE("Could not open %s\n", filename);
-        exit(1);
+        return 1;
     }
 
     frame = av_frame_alloc();
     if (!frame) {
         LOGE("Could not allocate video frame\n");
-        exit(1);
+        return 1;
     }
 
     do {
@@ -1336,7 +1350,7 @@ int example_video_decode(const char *filePath)
                                    data, data_size, AV_NOPTS_VALUE, AV_NOPTS_VALUE, 0);
             if (ret < 0) {
                 LOGE("Error while parsing\n");
-                exit(1);
+                return 1;
             }
             data      += ret;
             data_size -= ret;
@@ -1372,7 +1386,7 @@ static void decode_audio(AVCodecContext *dec_ctx, AVPacket *pkt, AVFrame *frame,
     ret = avcodec_send_packet(dec_ctx, pkt);
     if (ret < 0) {
         LOGE("Error submitting the packet to the decoder\n");
-        exit(1);
+        return ;
     }
 
     /* read all the output frames (in general there may be any number of them */
@@ -1382,13 +1396,13 @@ static void decode_audio(AVCodecContext *dec_ctx, AVPacket *pkt, AVFrame *frame,
             return;
         else if (ret < 0) {
             LOGE("Error during decoding\n");
-            exit(1);
+            return ;
         }
         data_size = av_get_bytes_per_sample(dec_ctx->sample_fmt);
         if (data_size < 0) {
             /* This should not occur, checking just for paranoia */
             LOGE("Failed to calculate data size\n");
-            exit(1);
+            return ;
         }
         for (i = 0; i < frame->nb_samples; i++)
             for (ch = 0; ch < dec_ctx->ch_layout.nb_channels; ch++)
@@ -1421,37 +1435,37 @@ int example_audio_decode(const char *filePath)
     codec = avcodec_find_decoder(AV_CODEC_ID_MP2);// 查找解码器
     if (!codec) {
         LOGE("Codec not found\n");
-        exit(1);
+        return 1;
     }
 
     parser = av_parser_init(codec->id);
     if (!parser) {
         LOGE("Parser not found\n");
-        exit(1);
+        return 1;
     }
 
     c = avcodec_alloc_context3(codec);
     if (!c) {
         LOGE("Could not allocate audio codec context\n");
-        exit(1);
+        return 1;
     }
 
     /* open it */
      // 打开解码器
     if (avcodec_open2(c, codec, NULL) < 0) {
         LOGE("Could not open codec\n");
-        exit(1);
+        return 1;
     }
 
     f = fopen(filename, "rb");
     if (!f) {
         LOGE("Could not open %s\n", filename);
-        exit(1);
+        return 1;
     }
     outfile = fopen(outfilename, "wb");
     if (!outfile) {
         av_free(c);
-        exit(1);
+        return 1;
     }
 
     /* decode until eof */
@@ -1462,7 +1476,7 @@ int example_audio_decode(const char *filePath)
         if (!decoded_frame) {
             if (!(decoded_frame = av_frame_alloc())) {
                 LOGE("Could not allocate audio frame\n");
-                exit(1);
+                return 1;
             }
         }
 // 将音频数据解析出来
@@ -1471,7 +1485,7 @@ int example_audio_decode(const char *filePath)
                                AV_NOPTS_VALUE, AV_NOPTS_VALUE, 0);
         if (ret < 0) {
             LOGE("Error while parsing\n");
-            exit(1);
+            return 1;
         }
         data      += ret;
         data_size -= ret;
@@ -1526,5 +1540,522 @@ int example_audio_decode(const char *filePath)
 }
 
 
+static int open_video_input_file(const char *filename)
+{
+    const AVCodec *dec;
+    int ret;
+    // 关联AVFormatContext到输入文件
+    if ((ret = avformat_open_input(&fmt_ctx, filename, NULL, NULL)) < 0) {
+        LOGE("Cannot open input file\n");
+        return ret;
+    }
+    // 查找文件中的流
+    if ((ret = avformat_find_stream_info(fmt_ctx, NULL)) < 0) {
+        LOGE("Cannot find stream information\n");
+        return ret;
+    }
+    // 选择最优的视频流
+    /* select the video stream */
+    ret = av_find_best_stream(fmt_ctx, AVMEDIA_TYPE_VIDEO, -1, -1, &dec, 0);
+    if (ret < 0) {
+        LOGE("Cannot find a video stream in the input file\n");
+        return ret;
+    }
+    video_stream_index = ret;
+
+    /* create decoding context */
+    // 创建avcodec context
+    dec_ctx = avcodec_alloc_context3(dec);
+    if (!dec_ctx)
+        return AVERROR(ENOMEM);
+
+    // 从流拷贝codec参数到avcodec context
+    avcodec_parameters_to_context(dec_ctx, fmt_ctx->streams[video_stream_index]->codecpar);
+
+    /* init the video decoder */
+    // 打开视频解码器
+    if ((ret = avcodec_open2(dec_ctx, dec, NULL)) < 0) {
+        LOGE("Cannot open video decoder\n");
+        return ret;
+    }
+
+    return 0;
+}
+
+static int init_video_filters(const char *filters_descr)
+{
+    char args[512];
+    int ret = 0;
+    const AVFilter *buffersrc  = avfilter_get_by_name("buffer");// 获取buffer  源滤镜
+    const AVFilter *buffersink = avfilter_get_by_name("buffersink");// 获取buffersink  sink滤镜
+    AVFilterInOut *outputs = avfilter_inout_alloc(); // 申请输入的滤镜结构
+    AVFilterInOut *inputs  = avfilter_inout_alloc(); // 申请输出的滤镜结构
+    AVRational time_base = fmt_ctx->streams[video_stream_index]->time_base;
+    enum AVPixelFormat pix_fmts[] = { AV_PIX_FMT_GRAY8, AV_PIX_FMT_NONE };
+
+    filter_graph = avfilter_graph_alloc(); // 申请AVFilterGraph，用于存储滤镜的in和out描述信息
+    if (!outputs || !inputs || !filter_graph) {
+        ret = AVERROR(ENOMEM);
+        goto end;
+    }
+
+    /* buffer video source: the decoded frames from the decoder will be inserted here. */
+    // 创建输入的AVFilterContext
+    snprintf(args, sizeof(args),
+             "video_size=%dx%d:pix_fmt=%d:time_base=%d/%d:pixel_aspect=%d/%d",
+             dec_ctx->width, dec_ctx->height, dec_ctx->pix_fmt,
+             time_base.num, time_base.den,
+             dec_ctx->sample_aspect_ratio.num, dec_ctx->sample_aspect_ratio.den);
+
+    ret = avfilter_graph_create_filter(&buffersrc_ctx, buffersrc, "in",
+                                       args, NULL, filter_graph);
+    if (ret < 0) {
+        LOGE("Cannot create buffer source\n");
+        goto end;
+    }
+
+    /* buffer video sink: to terminate the filter chain. */
+    // 创建输出的AVFilterContext
+    ret = avfilter_graph_create_filter(&buffersink_ctx, buffersink, "out",
+                                       NULL, NULL, filter_graph);
+    if (ret < 0) {
+        LOGE("Cannot create buffer sink\n");
+        goto end;
+    }
+
+    ret = av_opt_set_int_list(buffersink_ctx, "pix_fmts", pix_fmts,
+                              AV_PIX_FMT_NONE, AV_OPT_SEARCH_CHILDREN);
+    if (ret < 0) {
+        LOGE("Cannot set output pixel format\n");
+        goto end;
+    }
+
+    /*
+     * Set the endpoints for the filter graph. The filter_graph will
+     * be linked to the graph described by filters_descr.
+     */
+
+    /*
+     * The buffer source output must be connected to the input pad of
+     * the first filter described by filters_descr; since the first
+     * filter input label is not specified, it is set to "in" by
+     * default.
+     */
+     // 创建滤镜解析器
+    outputs->name       = av_strdup("in");
+    outputs->filter_ctx = buffersrc_ctx;
+    outputs->pad_idx    = 0;
+    outputs->next       = NULL;
+
+    /*
+     * The buffer sink input must be connected to the output pad of
+     * the last filter described by filters_descr; since the last
+     * filter output label is not specified, it is set to "out" by
+     * default.
+     */
+    inputs->name       = av_strdup("out");
+    inputs->filter_ctx = buffersink_ctx;
+    inputs->pad_idx    = 0;
+    inputs->next       = NULL;
+
+    if ((ret = avfilter_graph_parse_ptr(filter_graph, filters_descr,
+                                        &inputs, &outputs, NULL)) < 0)
+        goto end;
+
+    if ((ret = avfilter_graph_config(filter_graph, NULL)) < 0)
+        goto end;
+
+    end:
+    avfilter_inout_free(&inputs);
+    avfilter_inout_free(&outputs);
+
+    return ret;
+}
+
+static void display_frame(const AVFrame *frame, AVRational time_base)
+{
+    int x, y;
+    uint8_t *p0, *p;
+    int64_t delay;
+
+    if (frame->pts != AV_NOPTS_VALUE) {
+        if (last_pts != AV_NOPTS_VALUE) {
+            /* sleep roughly the right amount of time;
+             * usleep is in microseconds, just like AV_TIME_BASE. */
+            delay = av_rescale_q(frame->pts - last_pts,
+                                 time_base, AV_TIME_BASE_Q);
+            if (delay > 0 && delay < 1000000)
+                usleep(delay);
+        }
+        last_pts = frame->pts;
+    }
+
+    /* Trivial ASCII grayscale display. */
+    p0 = frame->data[0];
+    puts("\033c");
+    for (y = 0; y < frame->height; y++) {
+        p = p0;
+        for (x = 0; x < frame->width; x++)
+            putchar(" .-+#"[*(p++) / 52]);
+        putchar('\n');
+        p0 += frame->linesize[0];
+    }
+    fflush(stdout);
+}
+
+int example_video_decode_filter(const char *filePath)
+{
+    int ret;
+    AVPacket *packet;
+    AVFrame *frame;
+    AVFrame *filt_frame;
+
+    char buf[1024];
+    frame = av_frame_alloc();
+    filt_frame = av_frame_alloc();
+    packet = av_packet_alloc();
+    if (!frame || !filt_frame || !packet) {
+        LOGE("Could not allocate frame or packet\n");
+        return 0;
+    }
+    char* outFilePath = "/data/user/0/com.smartdevice.ffmpeg/app_video/test_filter.v";
+
+    // 根据输入文件打开视频解码器
+    if ((ret = open_video_input_file(filePath)) < 0){
+        LOGE("open_video_input_file fail\n");
+        goto end;
+    }
+
+    // 初始化视频滤镜
+    if ((ret = init_video_filters(video_filter_descr)) < 0){
+        LOGE("init_video_filters fail\n");
+        goto end;
+    }
+
+    /* read all packets */
+    while (1) {
+        if ((ret = av_read_frame(fmt_ctx, packet)) < 0)
+            break;
+
+        if (packet->stream_index == video_stream_index) {
+            ret = avcodec_send_packet(dec_ctx, packet);
+            if (ret < 0) {
+                LOGE("Error while sending a packet to the decoder\n");
+                break;
+            }
+
+            while (ret >= 0) {
+                ret = avcodec_receive_frame(dec_ctx, frame);
+                if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF) {
+                    break;
+                } else if (ret < 0) {
+                    LOGE("Error while receiving a frame from the decoder\n");
+                    goto end;
+                }
+
+                frame->pts = frame->best_effort_timestamp;
+
+                /* push the decoded frame into the filtergraph */
+                // 将解码后的视频帧抛给AVFilterContext进行处理
+                if (av_buffersrc_add_frame_flags(buffersrc_ctx, frame, AV_BUFFERSRC_FLAG_KEEP_REF) < 0) {
+                    LOGE("Error while feeding the filtergraph\n");
+                    break;
+                }
+
+                /* pull filtered frames from the filtergraph */
+                // 获取滤镜处理后的数据
+                while (1) {
+                    ret = av_buffersink_get_frame(buffersink_ctx, filt_frame);
+                    if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF)
+                        break;
+                    if (ret < 0)
+                        goto end;
+                    display_frame(filt_frame, buffersink_ctx->inputs[0]->time_base);
+                    snprintf(buf, sizeof(buf), "%s-%" PRId64, outFilePath, dec_ctx->frame_num);
+                    pgm_save(filt_frame->data[0], filt_frame->linesize[0],
+                             filt_frame->width, filt_frame->height, buf);// 保存文件
+                    av_frame_unref(filt_frame);
+                }
+                av_frame_unref(frame);
+            }
+        }
+        av_packet_unref(packet);
+    }
+    end:
+    avfilter_graph_free(&filter_graph);
+    avcodec_free_context(&dec_ctx);
+    avformat_close_input(&fmt_ctx);
+    av_frame_free(&frame);
+    av_frame_free(&filt_frame);
+    av_packet_free(&packet);
+
+    if (ret < 0 && ret != AVERROR_EOF) {
+        LOGE("Error occurred: %s\n", av_err2str(ret));
+        return 1;
+    }
+
+    return 0;
+}
+
+static int open_audio_input_file(const char *filename)
+{
+    const AVCodec *dec;
+    int ret;
+
+    if ((ret = avformat_open_input(&fmt_ctx, filename, NULL, NULL)) < 0) {
+       LOGE("Cannot open input file\n");
+        return ret;
+    }
+
+    if ((ret = avformat_find_stream_info(fmt_ctx, NULL)) < 0) {
+       LOGE("Cannot find stream information\n");
+        return ret;
+    }
+
+    /* select the audio stream */
+    ret = av_find_best_stream(fmt_ctx, AVMEDIA_TYPE_AUDIO, -1, -1, &dec, 0);
+    if (ret < 0) {
+       LOGE("Cannot find an audio stream in the input file\n");
+        return ret;
+    }
+    audio_stream_index = ret;
+
+    /* create decoding context */
+    dec_ctx = avcodec_alloc_context3(dec);
+    if (!dec_ctx)
+        return AVERROR(ENOMEM);
+    avcodec_parameters_to_context(dec_ctx, fmt_ctx->streams[audio_stream_index]->codecpar);
+
+    /* init the audio decoder */
+    if ((ret = avcodec_open2(dec_ctx, dec, NULL)) < 0) {
+       LOGE("Cannot open audio decoder\n");
+        return ret;
+    }
+
+    return 0;
+}
+
+static int init_audio_filters(const char *filters_descr)
+{
+    char args[512];
+    int ret = 0;
+    const AVFilter *abuffersrc  = avfilter_get_by_name("abuffer");
+    const AVFilter *abuffersink = avfilter_get_by_name("abuffersink");
+    AVFilterInOut *outputs = avfilter_inout_alloc();
+    AVFilterInOut *inputs  = avfilter_inout_alloc();
+    static const enum AVSampleFormat out_sample_fmts[] = { AV_SAMPLE_FMT_S16, AV_SAMPLE_FMT_NONE };
+    static const int out_sample_rates[] = { 8000, -1 };
+    const AVFilterLink *outlink;
+    AVRational time_base = fmt_ctx->streams[audio_stream_index]->time_base;
+
+    filter_graph = avfilter_graph_alloc();
+    if (!outputs || !inputs || !filter_graph) {
+        ret = AVERROR(ENOMEM);
+        goto end;
+    }
+
+    /* buffer audio source: the decoded frames from the decoder will be inserted here. */
+    if (dec_ctx->ch_layout.order == AV_CHANNEL_ORDER_UNSPEC)
+        av_channel_layout_default(&dec_ctx->ch_layout, dec_ctx->ch_layout.nb_channels);
+    ret = snprintf(args, sizeof(args),
+                   "time_base=%d/%d:sample_rate=%d:sample_fmt=%s:channel_layout=",
+                   time_base.num, time_base.den, dec_ctx->sample_rate,
+                   av_get_sample_fmt_name(dec_ctx->sample_fmt));
+    av_channel_layout_describe(&dec_ctx->ch_layout, args + ret, sizeof(args) - ret);
+    ret = avfilter_graph_create_filter(&buffersrc_ctx, abuffersrc, "in",
+                                       args, NULL, filter_graph);
+    if (ret < 0) {
+       LOGE("Cannot create audio buffer source\n");
+        goto end;
+    }
+
+    /* buffer audio sink: to terminate the filter chain. */
+    ret = avfilter_graph_create_filter(&buffersink_ctx, abuffersink, "out",
+                                       NULL, NULL, filter_graph);
+    if (ret < 0) {
+       LOGE("Cannot create audio buffer sink\n");
+        goto end;
+    }
+
+    ret = av_opt_set_int_list(buffersink_ctx, "sample_fmts", out_sample_fmts, -1,
+                              AV_OPT_SEARCH_CHILDREN);
+    if (ret < 0) {
+       LOGE("Cannot set output sample format\n");
+        goto end;
+    }
+
+    ret = av_opt_set(buffersink_ctx, "ch_layouts", "mono",
+                     AV_OPT_SEARCH_CHILDREN);
+    if (ret < 0) {
+       LOGE("Cannot set output channel layout\n");
+        goto end;
+    }
+
+    ret = av_opt_set_int_list(buffersink_ctx, "sample_rates", out_sample_rates, -1,
+                              AV_OPT_SEARCH_CHILDREN);
+    if (ret < 0) {
+       LOGE("Cannot set output sample rate\n");
+        goto end;
+    }
+
+    /*
+     * Set the endpoints for the filter graph. The filter_graph will
+     * be linked to the graph described by filters_descr.
+     */
+
+    /*
+     * The buffer source output must be connected to the input pad of
+     * the first filter described by filters_descr; since the first
+     * filter input label is not specified, it is set to "in" by
+     * default.
+     */
+    outputs->name       = av_strdup("in");
+    outputs->filter_ctx = buffersrc_ctx;
+    outputs->pad_idx    = 0;
+    outputs->next       = NULL;
+
+    /*
+     * The buffer sink input must be connected to the output pad of
+     * the last filter described by filters_descr; since the last
+     * filter output label is not specified, it is set to "out" by
+     * default.
+     */
+    inputs->name       = av_strdup("out");
+    inputs->filter_ctx = buffersink_ctx;
+    inputs->pad_idx    = 0;
+    inputs->next       = NULL;
+
+    if ((ret = avfilter_graph_parse_ptr(filter_graph, filters_descr,
+                                        &inputs, &outputs, NULL)) < 0)
+        goto end;
+
+    if ((ret = avfilter_graph_config(filter_graph, NULL)) < 0)
+        goto end;
+
+    /* Print summary of the sink buffer
+     * Note: args buffer is reused to store channel layout string */
+    outlink = buffersink_ctx->inputs[0];
+    av_channel_layout_describe(&outlink->ch_layout, args, sizeof(args));
+    av_log(NULL, AV_LOG_INFO, "Output: srate:%dHz fmt:%s chlayout:%s\n",
+           (int)outlink->sample_rate,
+           (char *)av_x_if_null(av_get_sample_fmt_name((AVSampleFormat)outlink->format), "?"),
+           args);
+
+    end:
+    avfilter_inout_free(&inputs);
+    avfilter_inout_free(&outputs);
+
+    return ret;
+}
+
+static void print_frame(const AVFrame *frame)
+{
+    const int n = frame->nb_samples * frame->ch_layout.nb_channels;
+    const uint16_t *p     = (uint16_t*)frame->data[0];
+    const uint16_t *p_end = p + n;
+    LOGD("print_frame n=%d",n);
+    LOGD("print_frame frame->ch_layout.nb_channels=%d",frame->ch_layout.nb_channels);
+    LOGD("print_frame frame->nb_samples=%d",frame->nb_samples);
+    while (p < p_end) {
+        fputc(*p    & 0xff, stdout);
+        fputc(*p>>8 & 0xff, stdout);
+        p++;
+    }
+    fflush(stdout);
+}
+
+int example_audio_decode_filter(const char *filePath)
+{
+    const char *outfilename = "/data/user/0/com.smartdevice.ffmpeg/app_video/decode_filter.a";
+    FILE *outfile = fopen(outfilename, "wb");
+
+    int ret;
+    AVPacket *packet = av_packet_alloc();
+    AVFrame *frame = av_frame_alloc();
+    AVFrame *filt_frame = av_frame_alloc();
+    size_t   data_size;
+    int i=0;
+    data_size = av_get_bytes_per_sample(AV_SAMPLE_FMT_S16);
+    if (!packet || !frame || !filt_frame) {
+        LOGE("Could not allocate frame or packet\n");
+        return 1;
+    }
+
+    if ((ret = open_audio_input_file(filePath)) < 0){
+        LOGE("open_audio_input_file fail\n");
+        goto end;
+    }
+
+    if ((ret = init_audio_filters(audio_filter_descr)) < 0){
+        LOGE("init_audio_filters fail\n");
+        goto end;
+    }
+
+    /* read all packets */
+    while (1) {
+        if ((ret = av_read_frame(fmt_ctx, packet)) < 0)
+            break;
+
+        if (packet->stream_index == audio_stream_index) {
+            ret = avcodec_send_packet(dec_ctx, packet);
+            if (ret < 0) {
+               LOGE("Error while sending a packet to the decoder\n");
+                break;
+            }
+
+            while (ret >= 0) {
+                ret = avcodec_receive_frame(dec_ctx, frame);
+                LOGD(" avcodec_receive_frame ret=%d",ret);
+                if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF) {
+                    break;
+                } else if (ret < 0) {
+                   LOGE("Error while receiving a frame from the decoder\n");
+                    goto end;
+                }
+
+                if (ret >= 0) {
+                    /* push the audio data from decoded frame into the filtergraph */
+                    if (av_buffersrc_add_frame_flags(buffersrc_ctx, frame, AV_BUFFERSRC_FLAG_KEEP_REF) < 0) {
+                       LOGE("Error while feeding the audio filtergraph\n");
+                        break;
+                    }
+
+                    /* pull filtered audio from the filtergraph */
+                    while (1) {
+                        ret = av_buffersink_get_frame(buffersink_ctx, filt_frame);
+                        LOGD(" av_buffersink_get_frame ret=%d",ret);
+                        if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF)
+                            break;
+                        if (ret < 0)
+                            goto end;
+                        print_frame(filt_frame);
+
+                        for (i = 0; i < filt_frame->nb_samples; i++){
+                            fwrite(filt_frame->data[0] + data_size*i, 1, data_size, outfile);
+                        }
 
 
+                        av_frame_unref(filt_frame);
+                    }
+                    av_frame_unref(frame);
+                }
+            }
+        }
+        av_packet_unref(packet);
+    }
+    end:
+    fclose(outfile);
+    avfilter_graph_free(&filter_graph);
+    avcodec_free_context(&dec_ctx);
+    avformat_close_input(&fmt_ctx);
+    av_packet_free(&packet);
+    av_frame_free(&frame);
+    av_frame_free(&filt_frame);
+
+    if (ret < 0 && ret != AVERROR_EOF) {
+        LOGE("Error occurred: %s\n", av_err2str(ret));
+        return 1;
+    }
+
+    return 0;
+}
