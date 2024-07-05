@@ -22,7 +22,7 @@ public class MainActivity extends AppCompatActivity {
 
     private ActivityMainBinding binding;
 
-    private TestType testType = TestType.AUDIO_DECODE_FILTER;
+    private TestType testType = TestType.RESAMPLE_AUDIO;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -37,75 +37,113 @@ public class MainActivity extends AppCompatActivity {
         String pk = getPackageName();
         String fileName;
         String filePath=null;
+        String assertDir = "video";
+
+        File parentFile = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS);
+        String parentPath = parentFile.getAbsolutePath()+File.separator;
+        String appFilePath = AssectsUtil.getAppDir(getApplicationContext(),assertDir)+File.separator;
+
+        Log.d(TAG, "appFilePath=" + appFilePath);
         if (testType == TestType.MUX) {
-            File parentFile = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DCIM);
             if (parentFile != null) {
                 Log.d(TAG, "parentFile=" + parentFile.getAbsolutePath());
             }
 
-
             fileName = "test_" + System.currentTimeMillis() + ".mp4";
             Log.d(TAG, "fileName=" + fileName);
-            filePath = parentFile.getAbsolutePath() + File.separator + fileName;
+            filePath = parentPath + fileName;
 
             mux(filePath);
         } else if (testType == TestType.DEMUX) {
-            AssectsUtil.loadAssetsDirfile(getApplicationContext(),"video");
+            AssectsUtil.loadAssetsDirfile(getApplicationContext(),assertDir);
             fileName = "test.mp4";
-            filePath = "/data/user/0/" + pk + "/app_video/" + fileName;
-            demux(filePath);
+            filePath = appFilePath + fileName;
+            String audioFileName = parentPath +"demux_audio.a";
+            String videoFileName = parentPath +"demux_video.v";
+            Log.d(TAG, "fileName=" + fileName);
+            demux(filePath,audioFileName,videoFileName);
         }else if(testType == TestType.REMUX){
-            AssectsUtil.loadAssetsDirfile(getApplicationContext(),"video");
+            AssectsUtil.loadAssetsDirfile(getApplicationContext(),assertDir);
             fileName = "test.mp4";
-            filePath = "/data/user/0/" + pk + "/app_video/" + fileName;
+            filePath = appFilePath + fileName;
             exampleRemux(filePath);
         } else if(testType == TestType.AVIO_READ){
-            AssectsUtil.loadAssetsDirfile(getApplicationContext(),"video");
+            AssectsUtil.loadAssetsDirfile(getApplicationContext(),assertDir);
             fileName = "test.mp4";
-            filePath = "/data/user/0/" + pk + "/app_video/" + fileName;
+            filePath = appFilePath + fileName;
             exampleAvioReading(filePath);
         }else if(testType == TestType.DECODE){
-            AssectsUtil.loadAssetsDirfile(getApplicationContext(),"video");
+            AssectsUtil.loadAssetsDirfile(getApplicationContext(),assertDir);
             fileName = "test.mp4";
-            filePath = "/data/user/0/" + pk + "/app_video/" + fileName;
-            exampleDecode(filePath);
+            filePath = appFilePath + fileName;
+            String audioFileName = parentPath +"decode.a";
+            String videoFileName = parentPath +"decode.v";
+            exampleDecode(filePath,audioFileName,videoFileName);
         }else if(testType == TestType.AUDIO_ENCODE){
-            AssectsUtil.loadAssetsDirfile(getApplicationContext(),"video");
+            AssectsUtil.loadAssetsDirfile(getApplicationContext(),assertDir);
             fileName = "test.mp2";
-            filePath = "/data/user/0/" + pk + "/app_video/" + fileName;
+            filePath = appFilePath + fileName;
             exampleAudioEncode(filePath);
         }else if(testType == TestType.VIDEO_ENCODE){
-            AssectsUtil.loadAssetsDirfile(getApplicationContext(),"video");
+            AssectsUtil.loadAssetsDirfile(getApplicationContext(),assertDir);
             fileName = "test.v";
-            filePath = "/data/user/0/" + pk + "/app_video/" + fileName;
+            filePath = appFilePath + fileName;
             exampleVideoEncode(filePath);
         }else if(testType == TestType.VIDEO_DECODE){
-            AssectsUtil.loadAssetsDirfile(getApplicationContext(),"video");
+            AssectsUtil.loadAssetsDirfile(getApplicationContext(),assertDir);
             fileName = "test.v";
-            filePath = "/data/user/0/" + pk + "/app_video/" + fileName;
-            exampleVideoDecode(filePath);
+            filePath = appFilePath + fileName;
+            String videoFileName = parentPath +"decode.v";
+            exampleVideoDecode(filePath,videoFileName);
         }else if(testType == TestType.AUDIO_DECODE){
-            AssectsUtil.loadAssetsDirfile(getApplicationContext(),"video");
+            AssectsUtil.loadAssetsDirfile(getApplicationContext(),assertDir);
             fileName = "test.mp2";
-            filePath = "/data/user/0/" + pk + "/app_video/" + fileName;
-            exampleAudioDecode(filePath);
+            filePath = appFilePath + fileName;
+            String audioFileName = parentPath +"decode.a";
+            exampleAudioDecode(filePath,audioFileName);
         }else if(testType == TestType.VIDEO_DECODE_FILTER){
-            AssectsUtil.loadAssetsDirfile(getApplicationContext(),"video");
+            AssectsUtil.loadAssetsDirfile(getApplicationContext(),assertDir);
             fileName = "test.v";
-            filePath = "/data/user/0/" + pk + "/app_video/" + fileName;
+            filePath = appFilePath + fileName;
             final String videoPath = filePath;
+            final String videoFileName = parentPath +"decode_filter.v";
             new Thread(new Runnable() {
                 @Override
                 public void run() {
-                    exampleVideoDecodeFilter(videoPath);
+                    exampleVideoDecodeFilter(videoPath,videoFileName);
                 }
             }).start();
 
         }else if(testType == TestType.AUDIO_DECODE_FILTER){
-            AssectsUtil.loadAssetsDirfile(getApplicationContext(),"video");
+            AssectsUtil.loadAssetsDirfile(getApplicationContext(),assertDir);
             fileName = "test.mp2";
-            filePath = "/data/user/0/" + pk + "/app_video/" + fileName;
-            exampleAudioDecodeFilter(filePath);
+            filePath = appFilePath + fileName;
+            String audioFileName = parentPath +"decode_filter.a";
+            exampleAudioDecodeFilter(filePath,audioFileName);
+        }else if(testType == TestType.FILTER_AUDIO){
+            fileName = "filter_audio.a";
+            Log.d(TAG, "fileName=" + fileName);
+            filePath = parentPath + fileName;
+            String outputPath =filePath;
+            Log.d(TAG, "outputPath=" + outputPath);
+            new Thread(new Runnable() {
+                @Override
+                public void run() {
+                    exampleFilterAudio(5,outputPath);
+                }
+            }).start();
+        }else if(testType == TestType.RESAMPLE_AUDIO){
+            fileName = "resample.a";
+            Log.d(TAG, "fileName=" + fileName);
+            filePath = parentPath + fileName;
+            String outputPath =filePath;
+            Log.d(TAG, "outputPath=" + outputPath);
+            new Thread(new Runnable() {
+                @Override
+                public void run() {
+                    exampleResampleAudio(outputPath);
+                }
+            }).start();
         }
         Log.d(TAG, "filePath=" + filePath);
 
@@ -116,18 +154,21 @@ public class MainActivity extends AppCompatActivity {
      * which is packaged with this application.
      */
     public native int mux(String filePath);
-    public native int demux(String filePath);
+    public native int demux(String filePath,String audioOutPath,String videoOutPath);
 
 //    public native int demuxExample(String filePath);
     public native int exampleRemux(String filePath);
     public native int exampleAvioReading(String filePath);
-    public native int exampleDecode(String filePath);
+    public native int exampleDecode(String filePath,String audioOutPath,String videoOutPath);
     public native int exampleAudioEncode(String filePath);
     public native int exampleVideoEncode(String filePath);
 
-    public native int exampleAudioDecode(String filePath);
-    public native int exampleVideoDecode(String filePath);
+    public native int exampleAudioDecode(String filePath,String outputPath);
+    public native int exampleVideoDecode(String filePath,String outputPath);
 
-    public native int exampleAudioDecodeFilter(String filePath);
-    public native int exampleVideoDecodeFilter(String filePath);
+    public native int exampleAudioDecodeFilter(String filePath,String outputPath);
+    public native int exampleVideoDecodeFilter(String filePath,String outputPath);
+
+    public native int exampleFilterAudio(int duration,String outputPath);
+    public native int exampleResampleAudio(String outputPath);
 }

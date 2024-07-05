@@ -4,6 +4,8 @@
 
 #include "ffmpeg.h"
 
+
+
 #include <csignal>
 #include <csetjmp>
 
@@ -23,6 +25,8 @@ extern "C" {
 #include "libavfilter/avfilter.h"
 #include "libavfilter/buffersrc.h"
 #include "libavfilter/buffersink.h"
+#include "libavutil/md5.h"
+#include "libswresample/swresample.h"
 #ifdef __cplusplus
 }
 #endif
@@ -41,6 +45,14 @@ static int tryTimes = 0;
 
 #define AUDIO_INBUF_SIZE 20480
 #define AUDIO_REFILL_THRESH 4096
+
+
+#define INPUT_SAMPLERATE     48000
+#define INPUT_FORMAT         AV_SAMPLE_FMT_FLTP
+#define INPUT_CHANNEL_LAYOUT (AVChannelLayout)AV_CHANNEL_LAYOUT_5POINT0
+
+#define VOLUME_VAL 0.90
+
 
 int getVersion() {
     int version = avutil_version();
@@ -76,7 +88,8 @@ static int video_stream_index = -1;
 static int audio_stream_index = -1;
 static int64_t last_pts = AV_NOPTS_VALUE;
 
-const char *video_filter_descr = "scale=78:24,transpose=cclock";
+//const char *video_filter_descr = "scale=78:24,transpose=cclock";
+const char *video_filter_descr = "movie=/data/user/0/com.smartdevice.ffmpeg/app_video/1.png[logo];[logo]colorkey=red:0.2:0.5[alphawm];[in][alphawm]overlay=20:20[out]";
 const char *audio_filter_descr = "aresample=8000,aformat=sample_fmts=s16:channel_layouts=mono";
 static const char *player       = "ffplay -f s16le -ar 8000 -ac 1 -";
 
@@ -252,12 +265,12 @@ static int get_format_from_sample_fmt(const char **fmt,
     return -1;
 }
 
-int example_demux(const char *filePath) {
+int example_demux(const char *filePath,const char *audioOutputPath,const char *videoOutputPath) {
     int ret = 0;
 
     src_filename = filePath;
-    video_dst_filename = "/data/user/0/com.smartdevice.ffmpeg/app_video/out.v"; // 视频流保存路径
-    audio_dst_filename = "/data/user/0/com.smartdevice.ffmpeg/app_video/out.a";// 音频流保存路径
+    video_dst_filename = videoOutputPath; // 视频流保存路径
+    audio_dst_filename = audioOutputPath;// 音频流保存路径
 
     /* open input file, and allocate format context */
     // 打开文件，分配format上下文
@@ -679,14 +692,14 @@ int example_avio_reading(const char *filePath) {
     return 0;
 }
 
-int example_decode (const char *filePath)
+int example_decode(const char *filePath,const char *audioOutputPath,const char *videoOutputPath)
 {
     int ret = 0;
 
 
     src_filename = filePath;
-    video_dst_filename = "/data/user/0/com.smartdevice.ffmpeg/app_video/out.v"; // 视频流保存路径
-    audio_dst_filename = "/data/user/0/com.smartdevice.ffmpeg/app_video/out.a";// 音频流保存路径
+    video_dst_filename = videoOutputPath; // 视频流保存路径
+    audio_dst_filename = audioOutputPath;// 音频流保存路径
 
     /* open input file, and allocate format context */
     // 关联fmt_ctx到src_filename文件
@@ -1269,7 +1282,7 @@ static void decode_video(AVCodecContext *dec_ctx, AVFrame *frame, AVPacket *pkt,
     }
 }
 
-int example_video_decode(const char *filePath)
+int example_video_decode(const char *filePath,const char *outputPath)
 {
     const char *filename, *outfilename;
     const AVCodec *codec;
@@ -1285,7 +1298,7 @@ int example_video_decode(const char *filePath)
     AVPacket *pkt;
 
     filename    = filePath;
-    outfilename = "/data/user/0/com.smartdevice.ffmpeg/app_video/decode.v";
+    outfilename = outputPath;
 
     pkt = av_packet_alloc();
     if (!pkt)
@@ -1410,7 +1423,7 @@ static void decode_audio(AVCodecContext *dec_ctx, AVPacket *pkt, AVFrame *frame,
     }
 }
 
-int example_audio_decode(const char *filePath)
+int example_audio_decode(const char *filePath,const char *outputPath)
 {
     const char *outfilename, *filename;
     const AVCodec *codec;
@@ -1428,7 +1441,7 @@ int example_audio_decode(const char *filePath)
     const char *fmt;
     
     filename    = filePath;
-    outfilename = "/data/user/0/com.smartdevice.ffmpeg/app_video/decode.a";
+    outfilename = outputPath;
     pkt = av_packet_alloc();
 
     /* find the MPEG audio decoder */
@@ -1703,7 +1716,7 @@ static void display_frame(const AVFrame *frame, AVRational time_base)
     fflush(stdout);
 }
 
-int example_video_decode_filter(const char *filePath)
+int example_video_decode_filter(const char *filePath,const char *outputPath)
 {
     int ret;
     AVPacket *packet;
@@ -1718,7 +1731,7 @@ int example_video_decode_filter(const char *filePath)
         LOGE("Could not allocate frame or packet\n");
         return 0;
     }
-    char* outFilePath = "/data/user/0/com.smartdevice.ffmpeg/app_video/test_filter.v";
+    const char* outFilePath = outputPath;
 
     // 根据输入文件打开视频解码器
     if ((ret = open_video_input_file(filePath)) < 0){
@@ -1964,9 +1977,9 @@ static void print_frame(const AVFrame *frame)
     fflush(stdout);
 }
 
-int example_audio_decode_filter(const char *filePath)
+int example_audio_decode_filter(const char *filePath,const char *outputPath)
 {
-    const char *outfilename = "/data/user/0/com.smartdevice.ffmpeg/app_video/decode_filter.a";
+    const char *outfilename = outputPath;
     FILE *outfile = fopen(outfilename, "wb");
 
     int ret;
@@ -2058,4 +2071,503 @@ int example_audio_decode_filter(const char *filePath)
     }
 
     return 0;
+}
+
+
+static int init_audio_filter_graph(AVFilterGraph **graph, AVFilterContext **src,
+                             AVFilterContext **sink)
+{
+    AVFilterGraph *filter_graph;
+    AVFilterContext *abuffer_ctx;
+    const AVFilter  *abuffer;
+    AVFilterContext *volume_ctx;
+    const AVFilter  *volume;
+    AVFilterContext *aformat_ctx;
+    const AVFilter  *aformat;
+    AVFilterContext *abuffersink_ctx;
+    const AVFilter  *abuffersink;
+
+    AVDictionary *options_dict = NULL;
+    char options_str[1024];
+    char ch_layout[64];
+
+    int err;
+
+    /* Create a new filtergraph, which will contain all the filters. */
+    filter_graph = avfilter_graph_alloc();// 创建AVFilterGraph
+    if (!filter_graph) {
+        LOGE("Unable to create filter graph.\n");
+        return AVERROR(ENOMEM);
+    }
+
+    /* Create the abuffer filter;
+     * it will be used for feeding the data into the graph. */
+    abuffer = avfilter_get_by_name("abuffer");// 获取abuffer filter
+    if (!abuffer) {
+        LOGE("Could not find the abuffer filter.\n");
+        return AVERROR_FILTER_NOT_FOUND;
+    }
+
+    abuffer_ctx = avfilter_graph_alloc_filter(filter_graph, abuffer, "src");// 获取abuffer filter对应的AVFilterContext
+    if (!abuffer_ctx) {
+        LOGE("Could not allocate the abuffer instance.\n");
+        return AVERROR(ENOMEM);
+    }
+
+    /* Set the filter options through the AVOptions API. */
+    const AVChannelLayout avChannelLayout = INPUT_CHANNEL_LAYOUT;
+    // 获取channel layout的描述
+    av_channel_layout_describe(&avChannelLayout, ch_layout, sizeof(ch_layout));
+    // 根据获取的描述设置abuffer filter的AVFilterContext的channel_layout参数
+    av_opt_set(abuffer_ctx, "channel_layout", ch_layout,                            AV_OPT_SEARCH_CHILDREN);
+    // 设置abuffer filter的AVFilterContext的sample_fmt参数
+    av_opt_set(abuffer_ctx, "sample_fmt",     av_get_sample_fmt_name(INPUT_FORMAT), AV_OPT_SEARCH_CHILDREN);
+    // 设置abuffer filter的AVFilterContext的time_base参数
+    av_opt_set_q(abuffer_ctx, "time_base",      (AVRational){ 1, INPUT_SAMPLERATE },  AV_OPT_SEARCH_CHILDREN);
+    // 设置abuffer filter的AVFilterContext的sample_rate参数
+    av_opt_set_int(abuffer_ctx, "sample_rate",    INPUT_SAMPLERATE,                     AV_OPT_SEARCH_CHILDREN);
+
+    /* Now initialize the filter; we pass NULL options, since we have already
+     * set all the options above. */
+    // 以字符方式初始化abuffe filter
+    err = avfilter_init_str(abuffer_ctx, NULL);
+    if (err < 0) {
+        LOGE("Could not initialize the abuffer filter.\n");
+        return err;
+    }
+
+    /* Create volume filter. */
+    // 创建声音滤镜
+    volume = avfilter_get_by_name("volume");
+    if (!volume) {
+        LOGE("Could not find the volume filter.\n");
+        return AVERROR_FILTER_NOT_FOUND;
+    }
+    // 创建声音滤镜的上下文
+    volume_ctx = avfilter_graph_alloc_filter(filter_graph, volume, "volume");
+    if (!volume_ctx) {
+        LOGE("Could not allocate the volume instance.\n");
+        return AVERROR(ENOMEM);
+    }
+
+    /* A different way of passing the options is as key/value pairs in a
+     * dictionary. */
+    // 设置字典的volume 参数
+    av_dict_set(&options_dict, "volume", AV_STRINGIFY(VOLUME_VAL), 0);
+     // 以字典方式初始化声音滤镜
+    err = avfilter_init_dict(volume_ctx, &options_dict);
+    // 释放字典
+    av_dict_free(&options_dict);
+    if (err < 0) {
+        LOGE("Could not initialize the volume filter.\n");
+        return err;
+    }
+
+    /* Create the aformat filter;
+     * it ensures that the output is of the format we want. */
+    // 创建aformat 滤镜
+    aformat = avfilter_get_by_name("aformat");
+    if (!aformat) {
+        LOGE("Could not find the aformat filter.\n");
+        return AVERROR_FILTER_NOT_FOUND;
+    }
+    // 创建aformat 滤镜的上下文
+    aformat_ctx = avfilter_graph_alloc_filter(filter_graph, aformat, "aformat");
+    if (!aformat_ctx) {
+        LOGE("Could not allocate the aformat instance.\n");
+        return AVERROR(ENOMEM);
+    }
+
+    /* A third way of passing the options is in a string of the form
+     * key1=value1:key2=value2.... */
+    // 转为AV_SAMPLE_FMT_S16采样格式、比特率44100 立体声
+    snprintf(options_str, sizeof(options_str),
+             "sample_fmts=%s:sample_rates=%d:channel_layouts=stereo",
+             av_get_sample_fmt_name(AV_SAMPLE_FMT_S16), 44100);
+    // 以字符参数方式初始化滤镜
+    err = avfilter_init_str(aformat_ctx, (const char*)options_str);
+    if (err < 0) {
+        av_log(NULL, AV_LOG_ERROR, "Could not initialize the aformat filter.\n");
+        return err;
+    }
+
+    /* Finally create the abuffersink filter;
+     * it will be used to get the filtered data out of the graph. */
+    // 创建abuffersink滤镜
+    abuffersink = avfilter_get_by_name("abuffersink");
+    if (!abuffersink) {
+        LOGE("Could not find the abuffersink filter.\n");
+        return AVERROR_FILTER_NOT_FOUND;
+    }
+    // 创建abuffersink滤镜的上下文
+    abuffersink_ctx = avfilter_graph_alloc_filter(filter_graph, abuffersink, "sink");
+    if (!abuffersink_ctx) {
+        LOGE("Could not allocate the abuffersink instance.\n");
+        return AVERROR(ENOMEM);
+    }
+
+    /* This filter takes no options. */
+    // 以字符参数方式初始化滤镜
+    err = avfilter_init_str(abuffersink_ctx, NULL);
+    if (err < 0) {
+        LOGE("Could not initialize the abuffersink instance.\n");
+        return err;
+    }
+
+    /* Connect the filters;
+     * in this simple case the filters just form a linear chain. */
+    // 连接abuffer和volume 滤镜
+    err = avfilter_link(abuffer_ctx, 0, volume_ctx, 0);
+    if (err >= 0)
+        err = avfilter_link(volume_ctx, 0, aformat_ctx, 0);  // 连接volume和 aformat滤镜
+    if (err >= 0)
+        err = avfilter_link(aformat_ctx, 0, abuffersink_ctx, 0);// 连接aformat和abuffersink 滤镜
+    if (err < 0) {
+        LOGE("Error connecting filters\n");
+        return err;
+    }
+
+    /* Configure the graph. */
+    // 配置滤镜图
+    err = avfilter_graph_config(filter_graph, NULL);
+    if (err < 0) {
+        av_log(NULL, AV_LOG_ERROR, "Error configuring the filter graph\n");
+        return err;
+    }
+
+    *graph = filter_graph;
+    *src   = abuffer_ctx;
+    *sink  = abuffersink_ctx;
+
+    return 0;
+}
+
+/* Do something useful with the filtered data: this simple
+ * example just prints the MD5 checksum of each plane to stdout. */
+static int process_audio_output(struct AVMD5 *md5, AVFrame *frame)
+{
+    int planar     = av_sample_fmt_is_planar((AVSampleFormat)frame->format);
+    int channels   = frame->ch_layout.nb_channels;
+    int planes     = planar ? channels : 1;
+    int bps        = av_get_bytes_per_sample((AVSampleFormat)frame->format);
+    int plane_size = bps * frame->nb_samples * (planar ? 1 : channels);
+    int i, j;
+//    LOGD("process_audio_output planar=%d,channels=%d,bps=%d",planar,channels,bps);
+
+    for (i = 0; i < planes; i++) {
+        uint8_t checksum[16];
+
+        av_md5_init(md5);
+        av_md5_sum(checksum, frame->extended_data[i], plane_size);
+
+        fprintf(stdout, "plane %d: 0x", i);
+        for (j = 0; j < sizeof(checksum); j++)
+            fprintf(stdout, "%02X", checksum[j]);
+        fprintf(stdout, "\n");
+    }
+    fprintf(stdout, "\n");
+
+    return 0;
+}
+static int save_audio(AVFrame *frame,FILE *outfile){
+    int data_size =   av_get_bytes_per_sample((AVSampleFormat)frame->format);
+    int nb_samples = frame->nb_samples;
+    int planar     = av_sample_fmt_is_planar((AVSampleFormat)frame->format);
+    int channels   = frame->ch_layout.nb_channels;
+    int planes     = planar ? channels : 1;
+    LOGD("save_audio data_size=%d,channels=%d,nb_samples=%d",data_size,channels,nb_samples);
+    for (int i = 0; i < nb_samples; i++){
+        LOGD("save_audio i=%d",i);
+        for (int j = 0; j < planes; j++) {
+//            LOGD("save_audio fwrite j=%d ,data_size=%d",j,data_size);
+            fwrite(frame->data[j] + data_size*i, 1, data_size, outfile);
+        }
+    }
+
+    return 0;
+}
+
+/* Construct a frame of audio data to be filtered;
+ * this simple example just synthesizes a sine wave. */
+static int get_audio_input(AVFrame *frame, int frame_num)
+{
+    int err, i, j;
+
+#define FRAME_SIZE 1024
+    const AVChannelLayout src =  INPUT_CHANNEL_LAYOUT;
+    /* Set up the frame properties and allocate the buffer for the data. */
+    frame->sample_rate    = INPUT_SAMPLERATE;
+    frame->format         = INPUT_FORMAT;
+    av_channel_layout_copy(&frame->ch_layout, &src);
+    frame->nb_samples     = FRAME_SIZE;
+    frame->pts            = frame_num * FRAME_SIZE;
+
+    err = av_frame_get_buffer(frame, 0);// 分配的frame的数据存储空间
+    if (err < 0)
+        return err;
+
+    /* Fill the data for each channel. */
+    // 填充frame的数据
+    for (i = 0; i < 5; i++) {
+        float *data = (float*)frame->extended_data[i];
+
+        for (j = 0; j < frame->nb_samples; j++)
+            data[j] = sin(2 * M_PI * (frame_num + j) * (i + 1) / FRAME_SIZE);
+    }
+
+    return 0;
+}
+
+int example_filter_audio(int time,const char* outputPath)
+{
+    struct AVMD5 *md5;
+    AVFilterGraph *graph;
+    AVFilterContext *src, *sink;
+    AVFrame *frame;
+    char errstr[1024];
+    float duration;
+    int err, nb_frames, i;
+
+    const char *outfilename = outputPath;
+    FILE *outfile = fopen(outfilename, "wb");
+    duration  = float(time);
+    nb_frames = duration * INPUT_SAMPLERATE / FRAME_SIZE;
+    if (nb_frames <= 0) {
+        LOGE("Invalid duration: %d\n", time);
+        return 1;
+    }
+
+    /* Allocate the frame we will be using to store the data. */
+    frame  = av_frame_alloc();
+    if (!frame) {
+        LOGE("Error allocating the frame\n");
+        return 1;
+    }
+
+    md5 = av_md5_alloc();
+    if (!md5) {
+        LOGE("Error allocating the MD5 context\n");
+        return 1;
+    }
+
+    /* Set up the filtergraph. */
+    err = init_audio_filter_graph(&graph, &src, &sink);
+    if (err < 0) {
+        LOGE("Unable to init filter graph:");
+        goto fail;
+    }
+
+    /* the main filtering loop */
+    for (i = 0; i < nb_frames; i++) {
+        /* get an input frame to be filtered */
+        err = get_audio_input(frame, i);
+        if (err < 0) {
+            LOGE("Error generating input frame:");
+            goto fail;
+        }
+
+        /* Send the frame to the input of the filtergraph. */
+        // 发送数据给滤镜图的输入
+        err = av_buffersrc_add_frame(src, frame);
+        if (err < 0) {
+            av_frame_unref(frame);
+            LOGE("Error submitting the frame to the filtergraph:");
+            goto fail;
+        }
+
+        /* Get all the filtered output that is available. */
+        //从滤镜图的输出接收数据
+        while ((err = av_buffersink_get_frame(sink, frame)) >= 0) {
+            /* now do something with our filtered frame */
+//            err = process_audio_output(md5, frame);
+//            if (err < 0) {
+//                LOGE("Error processing the filtered frame:");
+//                goto fail;
+//            }
+            save_audio(frame,outfile);
+            av_frame_unref(frame);
+        }
+
+        if (err == AVERROR(EAGAIN)) {
+            /* Need to feed more frames in. */
+            continue;
+        } else if (err == AVERROR_EOF) {
+            /* Nothing more to do, finish. */
+            break;
+        } else if (err < 0) {
+            /* An error occurred. */
+            LOGE("Error filtering the data:");
+            goto fail;
+        }
+    }
+
+    avfilter_graph_free(&graph);
+    av_frame_free(&frame);
+    av_freep(&md5);
+
+    return 0;
+
+    fail:
+    av_strerror(err, errstr, sizeof(errstr));
+    fclose(outfile);
+    LOGE("%s\n", errstr);
+    return 1;
+}
+
+
+
+/**
+ * Fill dst buffer with nb_samples, generated starting from t.
+ */
+static void fill_samples(double *dst, int nb_samples, int nb_channels, int sample_rate, double *t)
+{
+    int i, j;
+    double tincr = 1.0 / sample_rate, *dstp = dst;
+    const double c = 2 * M_PI * 440.0;
+
+    /* generate sin tone with 440Hz frequency and duplicated channels */
+    for (i = 0; i < nb_samples; i++) {
+        *dstp = sin(c * *t);
+        for (j = 1; j < nb_channels; j++)
+            dstp[j] = dstp[0];
+        dstp += nb_channels;
+        *t += tincr;
+    }
+}
+
+int example_resample_audio(const char* outputPath)
+{
+    AVChannelLayout src_ch_layout = AV_CHANNEL_LAYOUT_STEREO, dst_ch_layout = AV_CHANNEL_LAYOUT_SURROUND;
+    int src_rate = 48000, dst_rate = 44100;
+    uint8_t **src_data = NULL, **dst_data = NULL;
+    int src_nb_channels = 0, dst_nb_channels = 0;
+    int src_linesize, dst_linesize;
+    int src_nb_samples = 1024, dst_nb_samples, max_dst_nb_samples;
+    enum AVSampleFormat src_sample_fmt = AV_SAMPLE_FMT_DBL, dst_sample_fmt = AV_SAMPLE_FMT_S16;
+    const char *dst_filename = NULL;
+    FILE *dst_file;
+    int dst_bufsize;
+    const char *fmt;
+    struct SwrContext *swr_ctx;
+    char buf[64];
+    double t;
+    int ret;
+
+
+    dst_filename = outputPath;
+
+    dst_file = fopen(dst_filename, "wb+");
+    if (!dst_file) {
+        LOGE("Could not open destination file %s\n", dst_filename);
+        return 1;
+    }
+
+    /* create resampler context */
+    // 创建重采样上下文
+    swr_ctx = swr_alloc();
+    if (!swr_ctx) {
+        LOGE("Could not allocate resampler context\n");
+        ret = AVERROR(ENOMEM);
+        goto end;
+    }
+
+    /* set options */
+    av_opt_set_chlayout(swr_ctx, "in_chlayout",    &src_ch_layout, 0);
+    av_opt_set_int(swr_ctx, "in_sample_rate",       src_rate, 0);
+    av_opt_set_sample_fmt(swr_ctx, "in_sample_fmt", src_sample_fmt, 0);
+
+    av_opt_set_chlayout(swr_ctx, "out_chlayout",    &dst_ch_layout, 0);
+    av_opt_set_int(swr_ctx, "out_sample_rate",       dst_rate, 0);
+    av_opt_set_sample_fmt(swr_ctx, "out_sample_fmt", dst_sample_fmt, 0);
+
+    /* initialize the resampling context */
+    // 初始化重采样上下文
+    if ((ret = swr_init(swr_ctx)) < 0) {
+        LOGE("Failed to initialize the resampling context\n");
+        goto end;
+    }
+
+    /* allocate source and destination samples buffers */
+    // 分配源采样 缓存空间
+    src_nb_channels = src_ch_layout.nb_channels;
+    ret = av_samples_alloc_array_and_samples(&src_data, &src_linesize, src_nb_channels,
+                                             src_nb_samples, src_sample_fmt, 0);
+    if (ret < 0) {
+        LOGE("Could not allocate source samples\n");
+        goto end;
+    }
+    // 分配 目标采样缓存空间
+    /* compute the number of converted samples: buffering is avoided
+     * ensuring that the output buffer will contain at least all the
+     * converted input samples */
+    max_dst_nb_samples = dst_nb_samples =
+            av_rescale_rnd(src_nb_samples, dst_rate, src_rate, AV_ROUND_UP);
+
+    /* buffer is going to be directly written to a rawaudio file, no alignment */
+    dst_nb_channels = dst_ch_layout.nb_channels;
+    ret = av_samples_alloc_array_and_samples(&dst_data, &dst_linesize, dst_nb_channels,
+                                             dst_nb_samples, dst_sample_fmt, 0);
+    if (ret < 0) {
+        LOGE("Could not allocate destination samples\n");
+        goto end;
+    }
+
+    t = 0;
+    do {
+        /* generate synthetic audio */
+        //  产生模拟声音信号 填充到源采样 缓存空间
+        fill_samples((double *)src_data[0], src_nb_samples, src_nb_channels, src_rate, &t);
+
+        /* compute destination number of samples */
+        // 计算目标采样数
+        dst_nb_samples = av_rescale_rnd(swr_get_delay(swr_ctx, src_rate) +
+                                        src_nb_samples, dst_rate, src_rate, AV_ROUND_UP);
+        if (dst_nb_samples > max_dst_nb_samples) {
+            av_freep(&dst_data[0]);
+            ret = av_samples_alloc(dst_data, &dst_linesize, dst_nb_channels,
+                                   dst_nb_samples, dst_sample_fmt, 1);
+            if (ret < 0)
+                break;
+            max_dst_nb_samples = dst_nb_samples;
+        }
+
+        /* convert to destination format */
+         // 转换到目标格式
+        ret = swr_convert(swr_ctx, dst_data, dst_nb_samples, (const uint8_t **)src_data, src_nb_samples);
+        if (ret < 0) {
+            LOGE("Error while converting\n");
+            goto end;
+        }
+        // 获取转换后的大小
+        dst_bufsize = av_samples_get_buffer_size(&dst_linesize, dst_nb_channels,
+                                                 ret, dst_sample_fmt, 1);
+        if (dst_bufsize < 0) {
+            LOGE("Could not get sample buffer size\n");
+            goto end;
+        }
+        printf("t:%f in:%d out:%d\n", t, src_nb_samples, ret);
+        // 写入到文件中
+        fwrite(dst_data[0], 1, dst_bufsize, dst_file);
+    } while (t < 10);
+
+    if ((ret = get_format_from_sample_fmt(&fmt, dst_sample_fmt)) < 0)
+        goto end;
+    av_channel_layout_describe(&dst_ch_layout, buf, sizeof(buf));
+    LOGE("Resampling succeeded. Play the output file with the command:\n"
+                    "ffplay -f %s -channel_layout %s -channels %d -ar %d %s\n",
+            fmt, buf, dst_nb_channels, dst_rate, dst_filename);
+
+    end:
+    fclose(dst_file);
+
+    if (src_data)
+        av_freep(&src_data[0]);
+    av_freep(&src_data);
+
+    if (dst_data)
+        av_freep(&dst_data[0]);
+    av_freep(&dst_data);
+
+    swr_free(&swr_ctx);
+    return ret < 0;
 }

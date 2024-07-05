@@ -1,6 +1,7 @@
 package com.smartdevice.ffmpeg;
 
 public enum TestType {
+    DEBUG,
     MUX,
     DEMUX,
     REMUX,
@@ -13,4 +14,6 @@ public enum TestType {
     VIDEO_DECODE,
     AUDIO_DECODE_FILTER,
     VIDEO_DECODE_FILTER,
+    FILTER_AUDIO,
+    RESAMPLE_AUDIO,
 }

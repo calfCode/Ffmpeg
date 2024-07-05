@@ -19,7 +19,7 @@ public class AssectsUtil {
             Log.d(TAG ,"LoadAssetsMenufile context = null");
             return;
         }
-        String path = getTvDir(mContext,srcDir);
+        String path = getAppDir(mContext,srcDir);
         Log.d(TAG,"loadAssetsDirfile::path == " + path);
         AssectsUtil.deleteFilesByDirectory(new File(path));
         try
@@ -43,7 +43,7 @@ public class AssectsUtil {
 
     public static String getAssetsMenufile(Context mContext, String srcDir, String menu_name)
     {
-        String path = getTvDir(mContext,srcDir);
+        String path = getAppDir(mContext,srcDir);
         path = path + File.separator + menu_name;
         Log.d(TAG,"path==="+path);
         File filePath = new File(path);
@@ -121,7 +121,7 @@ public class AssectsUtil {
             }
         }
     }
-    private static String getTvDir(Context mContext, String dir)
+    public static String getAppDir(Context mContext, String dir)
     {
         File tvDir = mContext.getDir(dir, Context.MODE_PRIVATE);
         return tvDir.getAbsolutePath();
