@@ -3,9 +3,6 @@
 //
 
 #include "ffmpeg.h"
-
-
-
 #include <csignal>
 #include <csetjmp>
 
@@ -27,6 +24,7 @@ extern "C" {
 #include "libavfilter/buffersink.h"
 #include "libavutil/md5.h"
 #include "libswresample/swresample.h"
+#include "libavutil/parseutils.h"
 #ifdef __cplusplus
 }
 #endif
@@ -373,7 +371,7 @@ int example_demux(const char *filePath,const char *audioOutputPath,const char *v
     if (video_stream) {
         // 提示如何使用ffplay播放裸视频流
         LOGD("Play the output video file with the command:\n"
-             "ffplay -f rawvideo -pix_fmt %s -video_size %dx%d %s\n",
+             "ffplay -f rawvideo -pixel_format %s -video_size %dx%d %s\n",
              av_get_pix_fmt_name(pix_fmt), width, height,
              video_dst_filename);
     }
@@ -428,7 +426,7 @@ static void log_packet(const AVFormatContext *fmt_ctx, const AVPacket *pkt, cons
          pkt->stream_index);
 }
 
-int example_remux(const char *filePath) {
+int example_remux(const char *filePath,const char*outputPath) {
     const AVOutputFormat *ofmt = NULL;
     AVFormatContext *ifmt_ctx = NULL, *ofmt_ctx = NULL;
     AVPacket *pkt = NULL;
@@ -440,7 +438,7 @@ int example_remux(const char *filePath) {
 
 
     in_filename = filePath;
-    out_filename = "/storage/emulated/0/DCIM/test701_0seconds.mp4";
+    out_filename = outputPath;
 
     pkt = av_packet_alloc();// 分配包
     if (!pkt) {
@@ -799,7 +797,7 @@ int example_decode(const char *filePath,const char *audioOutputPath,const char *
 
     if (video_stream) {
         LOGD("Play the output video file with the command:\n"
-               "ffplay -f rawvideo -pix_fmt %s -video_size %dx%d %s\n",
+               "ffplay -f rawvideo -pixel_format %s -video_size %dx%d %s\n",
                av_get_pix_fmt_name(pix_fmt), width, height,
                video_dst_filename);
     }
@@ -2569,5 +2567,112 @@ int example_resample_audio(const char* outputPath)
     av_freep(&dst_data);
 
     swr_free(&swr_ctx);
+    return ret < 0;
+}
+
+
+static void fill_yuv_image(uint8_t *data[4], int linesize[4],
+                           int width, int height, int frame_index)
+{
+    int x, y;
+
+    /* Y */
+    for (y = 0; y < height; y++)
+        for (x = 0; x < width; x++)
+            data[0][y * linesize[0] + x] = x + y + frame_index * 3;
+
+    /* Cb and Cr */
+    for (y = 0; y < height / 2; y++) {
+        for (x = 0; x < width / 2; x++) {
+            data[1][y * linesize[1] + x] = 128 + y + frame_index * 2;
+            data[2][y * linesize[2] + x] = 64 + x + frame_index * 5;
+        }
+    }
+}
+
+int example_scale_video(const char*dstPath,const char* dstSize)
+{
+    uint8_t *src_data[4], *dst_data[4];
+    int src_linesize[4], dst_linesize[4];
+    int src_w = 270, src_h = 480, dst_w, dst_h;
+    enum AVPixelFormat src_pix_fmt = AV_PIX_FMT_YUV420P, dst_pix_fmt = AV_PIX_FMT_RGB24;
+    const char *dst_size = NULL;
+    const char *dst_filename = NULL;
+    FILE *dst_file;
+    int dst_bufsize;
+    struct SwsContext *sws_ctx;
+    int i, ret;
+    
+    dst_filename = dstPath;
+    dst_size     = dstSize;
+// 用于解析出输入的分辨率字符串的宽高信息。例如，输入的字符串为“1920x1080”或者“1920*1080”，
+// 经过av_parse_video_size()的处理之后，可以得到宽度为1920，高度为1080；
+// 此外，输入一个“特定分辨率”字符串例如“vga”（还有很多其他特定字符），也可以得到宽度为640，高度为480
+    if (av_parse_video_size(&dst_w, &dst_h, dst_size) < 0) {
+        LOGE("Invalid size '%s', must be in the form WxH or a valid size abbreviation\n",
+                dst_size);
+        return 0;
+    }
+
+    dst_file = fopen(dst_filename, "wb");
+    if (!dst_file) {
+        LOGE( "Could not open destination file %s\n", dst_filename);
+        return 0;
+    }
+
+    /* create scaling context */
+    // 创建scaling 上下文
+    sws_ctx = sws_getContext(src_w, src_h, src_pix_fmt,
+                             dst_w, dst_h, dst_pix_fmt,
+                             SWS_BILINEAR, NULL, NULL, NULL);
+    if (!sws_ctx) {
+        LOGE("Impossible to create scale context for the conversion "
+                "fmt:%s s:%dx%d -> fmt:%s s:%dx%d\n",
+                av_get_pix_fmt_name(src_pix_fmt), src_w, src_h,
+                av_get_pix_fmt_name(dst_pix_fmt), dst_w, dst_h);
+        ret = AVERROR(EINVAL);
+        goto end;
+    }
+
+    /* allocate source and destination image buffers */
+    // 分配源图像缓存空间
+    if ((ret = av_image_alloc(src_data, src_linesize,
+                              src_w, src_h, src_pix_fmt, 16)) < 0) {
+        LOGE( "Could not allocate source image\n");
+        goto end;
+    }
+    // 分配目标图像缓存空间
+    /* buffer is going to be written to rawvideo file, no alignment */
+    if ((ret = av_image_alloc(dst_data, dst_linesize,
+                              dst_w, dst_h, dst_pix_fmt, 1)) < 0) {
+        LOGE("Could not allocate destination image\n");
+        goto end;
+    }
+    dst_bufsize = ret;
+
+    for (i = 0; i < 100; i++) {
+        /* generate synthetic video */
+        // 产生模拟图像
+        fill_yuv_image(src_data, src_linesize, src_w, src_h, i);
+
+        /* convert to destination format */
+        // 转换为目标格式的图像
+        sws_scale(sws_ctx, (const uint8_t * const*)src_data,
+                  src_linesize, 0, src_h, dst_data, dst_linesize);
+
+        /* write scaled image to file */
+        // 写入转换后的数据
+        fwrite(dst_data[0], 1, dst_bufsize, dst_file);
+    }
+
+    LOGE("Scaling succeeded. Play the output file with the command:\n"
+                    "ffplay -f rawvideo -pixel_format %s -video_size %dx%d %s\n",
+            av_get_pix_fmt_name(dst_pix_fmt), dst_w, dst_h, dst_filename);
+
+    end:
+    fclose(dst_file);
+    av_freep(&src_data[0]);
+    av_freep(&dst_data[0]);
+    sws_freeContext(sws_ctx);
     return ret < 0;
 }

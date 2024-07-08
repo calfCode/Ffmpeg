@@ -17,7 +17,7 @@
 
 int getVersion();
 int example_demux(const char *filePath,const char *audioOutputPath,const char *videoOutputPath);
-int example_remux (const char *filePath);
+int example_remux(const char *filePath,const char*outputPath);
 int example_avio_reading (const char *filePath);
 int example_decode(const char *filePath,const char *audioOutputPath,const char *videoOutputPath);
 int example_audio_encode(const char *filePath);
@@ -28,4 +28,5 @@ int example_video_decode_filter(const char *filePath,const char *outputPath);
 int example_audio_decode_filter(const char *filePath,const char *outputPath);
 int example_filter_audio(int duration,const char* outputPath);
 int example_resample_audio(const char* outputPath);
+int example_scale_video(const char*dstPath,const char* dstSize);
 #endif //SKYAPP_FFMPEG_H

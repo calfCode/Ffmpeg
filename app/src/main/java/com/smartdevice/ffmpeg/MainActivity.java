@@ -22,7 +22,7 @@ public class MainActivity extends AppCompatActivity {
 
     private ActivityMainBinding binding;
 
-    private TestType testType = TestType.RESAMPLE_AUDIO;
+    private TestType testType = TestType.SCALE_VIDEO;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -66,7 +66,8 @@ public class MainActivity extends AppCompatActivity {
             AssectsUtil.loadAssetsDirfile(getApplicationContext(),assertDir);
             fileName = "test.mp4";
             filePath = appFilePath + fileName;
-            exampleRemux(filePath);
+            String videoOutPath = parentPath +"test701_0seconds.mp4";
+            exampleRemux(filePath,videoOutPath);
         } else if(testType == TestType.AVIO_READ){
             AssectsUtil.loadAssetsDirfile(getApplicationContext(),assertDir);
             fileName = "test.mp4";
@@ -144,6 +145,18 @@ public class MainActivity extends AppCompatActivity {
                     exampleResampleAudio(outputPath);
                 }
             }).start();
+        }else if(testType == TestType.SCALE_VIDEO){
+            fileName = "scale_video.v";
+            Log.d(TAG, "fileName=" + fileName);
+            filePath = parentPath + fileName;
+            String outputPath =filePath;
+            Log.d(TAG, "outputPath=" + outputPath);
+            new Thread(new Runnable() {
+                @Override
+                public void run() {
+                    exampleScaleVideo(outputPath,"540*960");
+                }
+            }).start();
         }
         Log.d(TAG, "filePath=" + filePath);
 
@@ -157,7 +170,7 @@ public class MainActivity extends AppCompatActivity {
     public native int demux(String filePath,String audioOutPath,String videoOutPath);
 
 //    public native int demuxExample(String filePath);
-    public native int exampleRemux(String filePath);
+    public native int exampleRemux(String filePath,String outputPath);
     public native int exampleAvioReading(String filePath);
     public native int exampleDecode(String filePath,String audioOutPath,String videoOutPath);
     public native int exampleAudioEncode(String filePath);
@@ -171,4 +184,5 @@ public class MainActivity extends AppCompatActivity {
 
     public native int exampleFilterAudio(int duration,String outputPath);
     public native int exampleResampleAudio(String outputPath);
+    public native int exampleScaleVideo(String outputPath,String dstSize);
 }

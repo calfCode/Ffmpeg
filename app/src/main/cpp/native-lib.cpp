@@ -665,11 +665,13 @@ Java_com_smartdevice_ffmpeg_MainActivity_demux(JNIEnv *env, jobject thiz, jstrin
 extern "C"
 JNIEXPORT jint JNICALL
 Java_com_smartdevice_ffmpeg_MainActivity_exampleRemux(JNIEnv *env, jobject thiz,
-                                                      jstring file_path) {
+                                                      jstring file_path,jstring output_path) {
     const char *filename = env->GetStringUTFChars(file_path, 0);
-    LOGD("remux filename=%s",filename);
-    example_remux(filename);
+    const char *outputfilename = env->GetStringUTFChars(output_path, 0);
+    LOGD("remux filename=%s;outputfilename=%s",filename,outputfilename);
+    example_remux(filename,outputfilename);
     env->ReleaseStringUTFChars(file_path, filename);
+    env->ReleaseStringUTFChars(output_path, outputfilename);
     return 0;
 }
 extern "C"
@@ -793,3 +795,16 @@ Java_com_smartdevice_ffmpeg_MainActivity_exampleResampleAudio(JNIEnv *env, jobje
 }
 
 
+
+extern "C"
+JNIEXPORT jint JNICALL
+Java_com_smartdevice_ffmpeg_MainActivity_exampleScaleVideo(JNIEnv *env, jobject thiz,
+                                                           jstring output_path, jstring dst_size) {
+    const char *dstSize = env->GetStringUTFChars(dst_size, 0);
+    const char *outputfilename = env->GetStringUTFChars(output_path, 0);
+    LOGD("exampleScaleVideo dstSize=%s,outputfilename=%s",dstSize,outputfilename);
+    example_scale_video(outputfilename,dstSize);
+    env->ReleaseStringUTFChars(dst_size, dstSize);
+    env->ReleaseStringUTFChars(output_path, outputfilename);
+    return 0;
+}

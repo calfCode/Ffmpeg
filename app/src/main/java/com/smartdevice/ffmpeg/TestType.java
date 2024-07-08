@@ -16,4 +16,5 @@ public enum TestType {
     VIDEO_DECODE_FILTER,
     FILTER_AUDIO,
     RESAMPLE_AUDIO,
+    SCALE_VIDEO,
 }
