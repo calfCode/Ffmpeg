@@ -29,4 +29,5 @@ int example_audio_decode_filter(const char *filePath,const char *outputPath);
 int example_filter_audio(int duration,const char* outputPath);
 int example_resample_audio(const char* outputPath);
 int example_scale_video(const char*dstPath,const char* dstSize);
+int example_add_ADTS(const char *filePath,const char *outputPath);
 #endif //SKYAPP_FFMPEG_H

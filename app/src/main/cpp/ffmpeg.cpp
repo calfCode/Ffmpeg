@@ -2652,16 +2652,16 @@ int example_scale_video(const char*dstPath,const char* dstSize)
 
     for (i = 0; i < 100; i++) {
         /* generate synthetic video */
-        // 产生模拟图像
+        // 产生模拟图像，存在在源图像缓存空间
         fill_yuv_image(src_data, src_linesize, src_w, src_h, i);
 
         /* convert to destination format */
-        // 转换为目标格式的图像
+        // 转换格式
         sws_scale(sws_ctx, (const uint8_t * const*)src_data,
                   src_linesize, 0, src_h, dst_data, dst_linesize);
 
         /* write scaled image to file */
-        // 写入转换后的数据
+        // 保存转换后的图像
         fwrite(dst_data[0], 1, dst_bufsize, dst_file);
     }
 
@@ -2675,4 +2675,133 @@ int example_scale_video(const char*dstPath,const char* dstSize)
     av_freep(&dst_data[0]);
     sws_freeContext(sws_ctx);
     return ret < 0;
+}
+#define ADTS_HEADER_LEN  7;
+
+const int sampling_frequencies[] = {
+        96000,  // 0x0
+        88200,  // 0x1
+        64000,  // 0x2
+        48000,  // 0x3
+        44100,  // 0x4
+        32000,  // 0x5
+        24000,  // 0x6
+        22050,  // 0x7
+        16000,  // 0x8
+        12000,  // 0x9
+        11025,  // 0xa
+        8000   // 0xb
+        // 0xc d e f是保留的
+};
+
+int adts_header(char * const p_adts_header, const int data_length,
+                const int profile, const int samplerate,
+                const int channels)
+{
+
+    int sampling_frequency_index = 3; // 默认使用48000hz
+    int adtsLen = data_length + 7;
+
+    int frequencies_size = sizeof(sampling_frequencies) / sizeof(sampling_frequencies[0]);
+    int i = 0;
+    for(i = 0; i < frequencies_size; i++)
+    {
+        if(sampling_frequencies[i] == samplerate)
+        {
+            sampling_frequency_index = i;
+            break;
+        }
+    }
+    if(i >= frequencies_size)
+    {
+        printf("unsupport samplerate:%d\n", samplerate);
+        return -1;
+    }
+
+    p_adts_header[0] = 0xff;         //syncword:0xfff                          高8bits
+    p_adts_header[1] = 0xf0;         //syncword:0xfff                          低4bits
+    p_adts_header[1] |= (0 << 3);    //MPEG Version:0 for MPEG-4,1 for MPEG-2  1bit
+    p_adts_header[1] |= (0 << 1);    //Layer:0                                 2bits
+    p_adts_header[1] |= 1;           //protection absent:1                     1bit
+
+    p_adts_header[2] = (profile)<<6;            //profile:profile               2bits
+    p_adts_header[2] |= (sampling_frequency_index & 0x0f)<<2; //sampling frequency index:sampling_frequency_index  4bits
+    p_adts_header[2] |= (0 << 1);             //private bit:0                   1bit
+    p_adts_header[2] |= (channels & 0x04)>>2; //channel configuration:channels  高1bit
+
+    p_adts_header[3] = (channels & 0x03)<<6; //channel configuration:channels 低2bits
+    p_adts_header[3] |= (0 << 5);               //original：0                1bit
+    p_adts_header[3] |= (0 << 4);               //home：0                    1bit
+    p_adts_header[3] |= (0 << 3);               //copyright id bit：0        1bit
+    p_adts_header[3] |= (0 << 2);               //copyright id start：0      1bit
+    p_adts_header[3] |= ((adtsLen & 0x1800) >> 11);           //frame length：value   高2bits
+
+    p_adts_header[4] = (uint8_t)((adtsLen & 0x7f8) >> 3);     //frame length:value    中间8bits
+    p_adts_header[5] = (uint8_t)((adtsLen & 0x7) << 5);       //frame length:value    低3bits
+    p_adts_header[5] |= 0x1f;                                 //buffer fullness:0x7ff 高5bits
+    p_adts_header[6] = 0xfc;      //‭11111100‬       //buffer fullness:0x7ff 低6bits
+    // number_of_raw_data_blocks_in_frame：
+    //    表示ADTS帧中有number_of_raw_data_blocks_in_frame + 1个AAC原始帧。
+
+    return 0;
+}
+int example_add_ADTS(const char *filePath,const char *outputPath){
+    AVFormatContext *avFormatContext=NULL;
+    int audioStreamIndex = -1;
+    LOGD("example_add_ADTS filePath=%s,outputPath=%s",filePath,outputPath);
+    FILE *output = fopen(outputPath,"wb");
+    if (!output){
+        return 0;
+    }
+    int ret = avformat_open_input(&avFormatContext,filePath,NULL,NULL);
+    if (ret<0){
+        LOGE("avformat_open_input ret=%s",strerror(ret));
+        return 0;
+    }
+    ret = avformat_find_stream_info(avFormatContext,NULL);
+    if (ret<0){
+        LOGE("avformat_find_stream_info ret=%s",strerror(ret));
+        return 0;
+    }
+    ret = av_find_best_stream(avFormatContext,AVMEDIA_TYPE_AUDIO,-1,-1,NULL,0);
+    if (ret<0){
+        LOGE("av_find_best_stream ret=%s",strerror(ret));
+        return 0;
+    }
+    audioStreamIndex = ret;
+    LOGD("audioStreamIndex=%d",audioStreamIndex);
+    AVStream *avStream = avFormatContext->streams[audioStreamIndex];
+    AVCodecID codecId = avStream->codecpar->codec_id;
+    LOGE("codecId=%X",codecId);
+    if ( codecId!= AV_CODEC_ID_AAC){
+        return 0;
+    }
+    AVPacket *avPacket = av_packet_alloc();
+    int len=0;
+    int profile = avStream->codecpar->profile;
+    int sample_rate = avStream->codecpar->sample_rate;
+    int nb_channels = avStream->codecpar->ch_layout.nb_channels;
+    LOGD("profile=%d",profile);
+    LOGD("sample_rate=%d",sample_rate);
+    LOGD("nb_channels=%d",nb_channels);
+    while (av_read_frame(avFormatContext,avPacket)>=0){
+        if (avPacket->stream_index == audioStreamIndex){
+            char adtsHeader[7] ={0};
+            adts_header(adtsHeader,avPacket->size,
+                        profile,
+                        sample_rate,
+                        nb_channels);
+            fwrite(adtsHeader,1,7,output);
+            len = fwrite(avPacket->data,1,avPacket->size,output);
+            if (len!=avPacket->size){
+
+            }
+        }
+        av_packet_unref(avPacket);
+    }
+
+
+    avformat_close_input(&avFormatContext);
+    fclose(output);
+    return 0;
 }

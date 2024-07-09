@@ -22,7 +22,7 @@ public class MainActivity extends AppCompatActivity {
 
     private ActivityMainBinding binding;
 
-    private TestType testType = TestType.SCALE_VIDEO;
+    private TestType testType = TestType.ADD_ADTS;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -157,6 +157,19 @@ public class MainActivity extends AppCompatActivity {
                     exampleScaleVideo(outputPath,"540*960");
                 }
             }).start();
+        }else if(testType == TestType.ADD_ADTS){
+            AssectsUtil.loadAssetsDirfile(getApplicationContext(),assertDir);
+            fileName = "test.mp4";
+            filePath = appFilePath + fileName;
+            final String inputPath = filePath;
+            final String adtsFileName = parentPath +"test_add_adts.aac";
+            new Thread(new Runnable() {
+                @Override
+                public void run() {
+                    exampleAddADTS(inputPath,adtsFileName);
+                }
+            }).start();
+
         }
         Log.d(TAG, "filePath=" + filePath);
 
@@ -185,4 +198,6 @@ public class MainActivity extends AppCompatActivity {
     public native int exampleFilterAudio(int duration,String outputPath);
     public native int exampleResampleAudio(String outputPath);
     public native int exampleScaleVideo(String outputPath,String dstSize);
+
+    public native int exampleAddADTS(String filePath,String outputPath);
 }

@@ -17,4 +17,5 @@ public enum TestType {
     FILTER_AUDIO,
     RESAMPLE_AUDIO,
     SCALE_VIDEO,
+    ADD_ADTS,
 }

@@ -808,3 +808,15 @@ Java_com_smartdevice_ffmpeg_MainActivity_exampleScaleVideo(JNIEnv *env, jobject 
     env->ReleaseStringUTFChars(output_path, outputfilename);
     return 0;
 }
+extern "C"
+JNIEXPORT jint JNICALL
+Java_com_smartdevice_ffmpeg_MainActivity_exampleAddADTS(JNIEnv *env, jobject thiz,
+                                                        jstring file_path, jstring output_path) {
+    const char *filename = env->GetStringUTFChars(file_path, 0);
+    const char *outputfilename = env->GetStringUTFChars(output_path, 0);
+    LOGD("exampleAddADTS filename=%s,outputfilename=%s",filename,outputfilename);
+    example_add_ADTS(filename,outputfilename);
+    env->ReleaseStringUTFChars(file_path, filename);
+    env->ReleaseStringUTFChars(output_path, outputfilename);
+    return 0;
+}
